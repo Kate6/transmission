@@ -48,7 +48,7 @@ sig_atomic_t manualUpdate = false;
 
 char const* torrentPath = nullptr;
 
-auto constexpr Options = std::array<tr_option, 20>{
+auto constexpr Options = std::array<tr_option, 24>{
     { { 'b', "blocklist", "Enable peer blocklists", "b", false, nullptr },
       { 'B', "no-blocklist", "Disable peer blocklists", "B", false, nullptr },
       { 'd', "downlimit", "Set max download speed in " SPEED_K_STR, "d", true, "<speed>" },
@@ -74,6 +74,10 @@ auto constexpr Options = std::array<tr_option, 20>{
       { 'V', "version", "Show version number and exit", "V", false, nullptr },
       { 'w', "download-dir", "Where to save downloaded data", "w", true, "<path>" },
       { 500, "sequential-download", "Download pieces sequentially", "seq", false, nullptr },
+      { 'S', "dont-seed", "Don\'t seed longer than absolutely necessary", "S", false, nullptr },
+      { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", true, "<ipv4 addr>" },
+      { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", true, "<ipv6 addr>" },
+      { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", true, "<ip addr>" },
 
       { 0, nullptr, nullptr, nullptr, false, nullptr } }
 };
@@ -244,6 +248,25 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
 
         case 'V':
             showVersion = true;
+            break;
+
+        case 'S':
+            tr_variantDictAddBool(d, TR_KEY_ratio_limit_enabled, true);
+            tr_variantDictAddReal(d, TR_KEY_ratio_limit, 0.0);
+            tr_variantDictAddBool(d, TR_KEY_idle_seeding_limit_enabled, true);
+            tr_variantDictAddInt(d, TR_KEY_idle_seeding_limit, 1.0);
+            break;
+
+        case 'i':
+            tr_variantDictAddStr(d, TR_KEY_bind_address_ipv4, my_optarg);
+            break;
+
+        case 'I':
+            tr_variantDictAddStr(d, TR_KEY_bind_address_ipv6, my_optarg);
+            break;
+
+        case 'r':
+            tr_variantDictAddStr(d, TR_KEY_rpc_bind_address, my_optarg);
             break;
 
         case 'w':
