@@ -48,7 +48,7 @@ sig_atomic_t manualUpdate = false;
 
 char const* torrentPath = nullptr;
 
-auto constexpr Options = std::array<tr_option, 24>{
+auto constexpr Options = std::array<tr_option, 25>{
     { { 'b', "blocklist", "Enable peer blocklists", "b", false, nullptr },
       { 'B', "no-blocklist", "Disable peer blocklists", "B", false, nullptr },
       { 'd', "downlimit", "Set max download speed in " SPEED_K_STR, "d", true, "<speed>" },
@@ -75,6 +75,7 @@ auto constexpr Options = std::array<tr_option, 24>{
       { 'w', "download-dir", "Where to save downloaded data", "w", true, "<path>" },
       { 500, "sequential-download", "Download pieces sequentially", "seq", false, nullptr },
       { 'S', "dont-seed", "Don\'t seed longer than absolutely necessary", "S", false, nullptr },
+      { 'E', "simple-peer", "Disable uTP, PEX and DHT", "E", false, nullptr },
       { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", true, "<ipv4 addr>" },
       { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", true, "<ipv6 addr>" },
       { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", true, "<ip addr>" },
@@ -255,6 +256,13 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
             tr_variantDictAddReal(d, TR_KEY_ratio_limit, 0.0);
             tr_variantDictAddBool(d, TR_KEY_idle_seeding_limit_enabled, true);
             tr_variantDictAddInt(d, TR_KEY_idle_seeding_limit, 1.0);
+            break;
+
+        case 'E':
+            // disable dht, pex and utp
+            tr_variantDictAddBool(d, TR_KEY_dht_enabled, false);
+            tr_variantDictAddBool(d, TR_KEY_pex_enabled, false);
+            tr_variantDictAddBool(d, TR_KEY_utp_enabled, false);
             break;
 
         case 'i':

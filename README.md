@@ -9,6 +9,10 @@ Transmission is a fast, easy, and free BitTorrent client. It comes in several fl
   
 Visit https://transmissionbt.com/ for more information.
 
+## Kate6's Slight Modification
+
+Added a few command line switches to the transmission-cli client that I believe would be useful for my particular use case.
+
 ## Documentation
 
 [Transmission's documentation](docs/README.md) is currently out-of-date, but the team has recently begun a new project to update it and is looking for volunteers. If you're interested, please feel free to submit pull requests!
