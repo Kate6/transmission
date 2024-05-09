@@ -450,7 +450,7 @@ Glib::RefPtr<Gio::MenuModel> MainWindow::Impl::createSpeedMenu(
         [this, dir](Glib::VariantBase const& value)
         { onSpeedSet(dir, Glib::VariantBase::cast_dynamic<VariantInt>(value).get()); });
 
-    for (auto const KBps : { 50, 100, 250, 500, 1000, 2500, 5000, 10000 })
+    for (auto const KBps : { 1, 5, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000 })
     {
         auto item = Gio::MenuItem::create(Speed{ KBps, Speed::Units::KByps }.to_string(), full_stock_action_name);
         item->set_action_and_target(full_stock_action_name, VariantInt::create(KBps));
