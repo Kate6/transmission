@@ -172,8 +172,8 @@ void onTorrentFileDownloaded(tr_web::FetchResponse const& response)
     {
         if (c == 'g')
         {
+            tr_optind = ind;
             return my_optarg;
-            break;
         }
     }
 
