@@ -31,12 +31,14 @@
 #include <glibmm/i18n.h>
 #include <glibmm/main.h>
 #include <glibmm/miscutils.h>
+#include <glibmm/timer.h>
 #include <glibmm/ustring.h>
 #include <glibmm/variant.h>
 #include <gtkmm/image.h>
 #include <gtkmm/label.h>
 #include <gtkmm/menubutton.h>
 #include <gtkmm/scrolledwindow.h>
+#include <gtkmm/spinbutton.h>
 #include <gtkmm/togglebutton.h>
 #include <gtkmm/treemodel.h>
 #include <gtkmm/treeview.h>
@@ -117,6 +119,16 @@ private:
 
     Glib::RefPtr<Gio::MenuModel> createStatsMenu();
 
+    Gtk::SpinButton* init_spin_button(
+        Glib::ustring const& name,
+        tr_quark key,
+        int low,
+        int high,
+        int step,
+        Glib::RefPtr<Gtk::Builder> const& builder);
+    bool spun_cb_idle(Gtk::SpinButton& spin, tr_quark key, bool isDouble);
+    void spun_cb(Gtk::SpinButton& w, tr_quark key, bool isDouble);
+
     void on_popup_menu(double event_x, double event_y);
 
     void onSpeedToggled(std::string const& action_name, tr_direction dir, bool enabled);
@@ -168,6 +180,9 @@ private:
     Gtk::ToggleButton* alt_speed_button_ = nullptr;
     sigc::connection pref_handler_id_;
     IF_GTKMM4(Gtk::PopoverMenu*, Gtk::Menu*) popup_menu_ = nullptr;
+
+    Gtk::SpinButton* portSpin_ = nullptr;
+    std::map<tr_quark, std::pair<std::unique_ptr<Glib::Timer>, sigc::connection>> spin_timers_;
 };
 
 /***
@@ -365,6 +380,11 @@ void MainWindow::Impl::prefsChanged(tr_quark const key)
 MainWindow::Impl::~Impl()
 {
     pref_handler_id_.disconnect();
+
+    for (auto& [key, info] : spin_timers_)
+    {
+        info.second.disconnect();
+    }
 }
 
 void MainWindow::Impl::status_menu_toggled_cb(std::string const& action_name, Glib::ustring const& val)
@@ -619,6 +639,63 @@ Glib::RefPtr<Gio::MenuModel> MainWindow::Impl::createStatsMenu()
     return top;
 }
 
+bool MainWindow::Impl::spun_cb_idle(Gtk::SpinButton& spin, tr_quark const key, bool isDouble)
+{
+    auto const last_change_it = spin_timers_.find(key);
+    g_assert(last_change_it != spin_timers_.end());
+
+    /* has the user stopped making changes? */
+    if (last_change_it->second.first->elapsed() < 0.33)
+    {
+        return true;
+    }
+
+    /* update the core */
+    if (isDouble)
+    {
+        core_->set_pref(key, spin.get_value());
+    }
+    else
+    {
+        core_->set_pref(key, spin.get_value_as_int());
+    }
+
+    /* cleanup */
+    spin_timers_.erase(last_change_it);
+    return false;
+}
+
+void MainWindow::Impl::spun_cb(Gtk::SpinButton& w, tr_quark const key, bool isDouble)
+{
+    /* user may be spinning through many values, so let's hold off
+       for a moment to keep from flooding the core with changes */
+    auto last_change_it = spin_timers_.find(key);
+    if (last_change_it == spin_timers_.end())
+    {
+        auto timeout_tag = Glib::signal_timeout().connect_seconds(
+            [this, &w, key, isDouble]() { return spun_cb_idle(w, key, isDouble); },
+            1);
+        last_change_it = spin_timers_.emplace(key, std::pair(std::make_unique<Glib::Timer>(), timeout_tag)).first;
+    }
+
+    last_change_it->second.first->start();
+}
+
+Gtk::SpinButton* MainWindow::Impl::init_spin_button(
+    Glib::ustring const& name,
+    tr_quark const key,
+    int low,
+    int high,
+    int step,
+    Glib::RefPtr<Gtk::Builder> const& builder)
+{
+    auto* button = gtr_get_widget<Gtk::SpinButton>(builder, name);
+    button->set_adjustment(Gtk::Adjustment::create(gtr_pref_int_get(key), low, high, step));
+    button->set_digits(0);
+    button->signal_value_changed().connect([this, button, key]() { spun_cb(*button, key, false); });
+    return button;
+}
+
 /***
 ****  PUBLIC
 ***/
@@ -663,6 +740,7 @@ MainWindow::Impl::Impl(
     , stats_lb_(gtr_get_widget<Gtk::Label>(builder, "statistics_label"))
     , alt_speed_image_(gtr_get_widget<Gtk::Image>(builder, "alt_speed_button_image"))
     , alt_speed_button_(gtr_get_widget<Gtk::ToggleButton>(builder, "alt_speed_button"))
+    , portSpin_(init_spin_button("listening_port_spin", TR_KEY_peer_port, 1, std::numeric_limits<uint16_t>::max(), 1, builder))
 {
     /* make the window */
     window.set_title(Glib::get_application_name());
