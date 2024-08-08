@@ -48,7 +48,7 @@ sig_atomic_t manualUpdate = false;
 
 char const* torrentPath = nullptr;
 
-auto constexpr Options = std::array<tr_option, 25>{
+auto constexpr Options = std::array<tr_option, 26>{
     { { 'b', "blocklist", "Enable peer blocklists", "b", false, nullptr },
       { 'B', "no-blocklist", "Disable peer blocklists", "B", false, nullptr },
       { 'd', "downlimit", "Set max download speed in " SPEED_K_STR, "d", true, "<speed>" },
@@ -79,7 +79,7 @@ auto constexpr Options = std::array<tr_option, 25>{
       { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", true, "<ipv4 addr>" },
       { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", true, "<ipv6 addr>" },
       { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", true, "<ip addr>" },
-
+      { 600, "bind-interface", "Bind to specific interface", "inf", true, "<interface>" },
       { 0, nullptr, nullptr, nullptr, false, nullptr } }
 };
 
@@ -275,6 +275,10 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
 
         case 'r':
             tr_variantDictAddStr(d, TR_KEY_rpc_bind_address, my_optarg);
+            break;
+
+        case 600:
+            tr_variantDictAddStr(d, TR_KEY_bind_interface, my_optarg);
             break;
 
         case 'w':

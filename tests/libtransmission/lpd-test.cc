@@ -68,6 +68,11 @@ public:
         return session_.timerMaker();
     }
 
+    [[nodiscard]] char const* get_bind_interface() override
+    {
+        return tr_sessionGetBindInterface(&session_);
+    }
+
     void setNextAnnounceTime(std::string_view info_hash_str, time_t announce_after) override
     {
         for (auto& tor : torrents_)

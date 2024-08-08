@@ -51,6 +51,8 @@ public:
 
         [[nodiscard]] virtual libtransmission::TimerMaker& timerMaker() = 0;
 
+        [[nodiscard]] virtual char const* get_bind_interface() = 0;
+
         virtual void setNextAnnounceTime(std::string_view info_hash_str, time_t announce_at) = 0;
 
         // returns true if info was used

@@ -246,6 +246,9 @@ tr_peer_socket tr_netOpenPeerSocket(tr_session* session, tr_socket_address const
         return {};
     }
 
+    char const* bindInterface = tr_sessionGetBindInterface(session);
+    setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
+
     // seeds don't need a big read buffer, so make it smaller
     if (client_is_seed)
     {
@@ -304,7 +307,7 @@ tr_peer_socket tr_netOpenPeerSocket(tr_session* session, tr_socket_address const
 
 namespace
 {
-tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppress_msgs, int* err_out)
+tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppress_msgs, int* err_out, char const* bindInterface)
 {
     TR_ASSERT(addr.is_valid());
 
@@ -321,6 +324,8 @@ tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppres
         tr_net_close_socket(fd);
         return TR_BAD_SOCKET;
     }
+
+    setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
 
     int optval = 1;
     (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<char const*>(&optval), sizeof(optval));
@@ -389,10 +394,10 @@ tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppres
 }
 } // namespace
 
-tr_socket_t tr_netBindTCP(tr_address const& addr, tr_port port, bool suppress_msgs)
+tr_socket_t tr_netBindTCP(tr_address const& addr, tr_port port, bool suppress_msgs, char const* bindInterface)
 {
     int unused = 0;
-    return tr_netBindTCPImpl(addr, port, suppress_msgs, &unused);
+    return tr_netBindTCPImpl(addr, port, suppress_msgs, &unused, bindInterface);
 }
 
 std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session* session, tr_socket_t listening_sockfd)
@@ -407,6 +412,9 @@ std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session
     {
         return {};
     }
+
+    char const* bindInterface = tr_sessionGetBindInterface(session);
+    setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
 
     // get the address and port,
     // make the socket unblocking,

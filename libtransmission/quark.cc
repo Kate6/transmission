@@ -51,6 +51,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "beginPiece"sv,
     "bind-address-ipv4"sv,
     "bind-address-ipv6"sv,
+    "bind-interface"sv,
     "bitfield"sv,
     "blocklist-date"sv,
     "blocklist-enabled"sv,

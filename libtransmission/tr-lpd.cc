@@ -223,7 +223,7 @@ public:
         , announce_timer_{ mediator.timerMaker().create([this]() { announceUpkeep(); }) }
         , dos_timer_{ mediator.timerMaker().create([this]() { dosUpkeep(); }) }
     {
-        if (!init(event_base))
+        if (!init(event_base, mediator.get_bind_interface()))
         {
             return;
         }
@@ -258,10 +258,10 @@ public:
     }
 
 private:
-    bool init(struct event_base* event_base)
+    bool init(struct event_base* event_base, char const* bindInterface)
     {
         ipp_t n_success = NUM_TR_AF_INET_TYPES;
-        if (!initImpl<TR_AF_INET>(event_base))
+        if (!initImpl<TR_AF_INET>(event_base, bindInterface))
         {
             auto const err = sockerrno;
             tr_net_close_socket(mcast_sockets_[TR_AF_INET]);
@@ -274,7 +274,7 @@ private:
             --n_success;
         }
 
-        if (!initImpl<TR_AF_INET6>(event_base))
+        if (!initImpl<TR_AF_INET6>(event_base, bindInterface))
         {
             auto const err = sockerrno;
             tr_net_close_socket(mcast_sockets_[TR_AF_INET6]);
@@ -297,7 +297,7 @@ private:
      * and event-based message handling.
      */
     template<tr_address_type ip_protocol>
-    bool initImpl(struct event_base* event_base)
+    bool initImpl(struct event_base* event_base, char const* bindInterface)
     {
         auto const opt_on = 1;
         auto& sock = mcast_sockets_[ip_protocol];
@@ -309,6 +309,8 @@ private:
 
         // setup datagram socket
         sock = socket(tr_ip_protocol_to_af(ip_protocol), SOCK_DGRAM, 0);
+
+        setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
 
         if (sock == TR_BAD_SOCKET)
         {

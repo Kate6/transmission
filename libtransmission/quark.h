@@ -53,6 +53,7 @@ enum
     TR_KEY_beginPiece,
     TR_KEY_bind_address_ipv4,
     TR_KEY_bind_address_ipv6,
+    TR_KEY_bind_interface,
     TR_KEY_bitfield,
     TR_KEY_blocklist_date,
     TR_KEY_blocklist_enabled,

@@ -27,6 +27,7 @@
 #include <gtkmm/cellrenderertext.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/combobox.h>
+#include <gtkmm/comboboxtext.h>
 #include <gtkmm/editable.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/label.h>
@@ -40,6 +41,9 @@
 #include <gtkmm/eventcontrollerfocus.h>
 #endif
 
+#include <ifaddrs.h>
+#include <stdio.h>
+
 #include <fmt/core.h>
 
 #include <array>
@@ -50,6 +54,8 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+
+#include <sys/types.h>
 
 using namespace libtransmission::Values;
 
@@ -108,6 +114,7 @@ public:
     Gtk::TextView* init_text_view(Glib::ustring const& name, tr_quark key);
     PathButton* init_chooser_button(Glib::ustring const& name, tr_quark key);
     Gtk::ComboBox* init_encryption_combo(Glib::ustring const& name, tr_quark key);
+    Gtk::ComboBox* init_bind_interface_combo(Glib::ustring const& name, tr_quark key);
     Gtk::ComboBox* init_time_combo(Glib::ustring const& name, tr_quark key);
     Gtk::ComboBox* init_week_combo(Glib::ustring const& name, tr_quark key);
 
@@ -138,6 +145,7 @@ private:
     void chosen_cb(PathButton& w, tr_quark key);
 
     void onIntComboChanged(Gtk::ComboBox& combo_box, tr_quark key);
+    void onBindIntComboChanged(Gtk::ComboBoxText& combo_box, tr_quark const key);
 
     static auto get_weekday_string(Glib::Date::Weekday weekday);
 
@@ -301,6 +309,11 @@ void PageBase::onIntComboChanged(Gtk::ComboBox& combo_box, tr_quark const key)
     core_->set_pref(key, gtr_combo_box_get_active_enum(combo_box));
 }
 
+void PageBase::onBindIntComboChanged(Gtk::ComboBoxText& combo_box, tr_quark const key)
+{
+    core_->set_pref(key, combo_box.get_active_text());
+}
+
 Gtk::ComboBox* PageBase::init_encryption_combo(Glib::ustring const& name, tr_quark const key)
 {
     auto* const combo = get_widget<Gtk::ComboBox>(name);
@@ -313,6 +326,36 @@ Gtk::ComboBox* PageBase::init_encryption_combo(Glib::ustring const& name, tr_qua
         });
     gtr_combo_box_set_active_enum(*combo, gtr_pref_int_get(key));
     combo->signal_changed().connect([this, combo, key]() { onIntComboChanged(*combo, key); });
+    return combo;
+}
+
+Gtk::ComboBox* PageBase::init_bind_interface_combo(Glib::ustring const& name, tr_quark const key)
+{
+    struct ifaddrs *addrs, *tmp;
+    Gtk::ComboBoxText* combo = get_widget<Gtk::ComboBoxText>(name);
+    char const* selectedOption = strdup(gtr_pref_string_get(key).c_str());
+
+    int selectedIncluded = 0;
+    getifaddrs(&addrs);
+    tmp = addrs;
+    while (tmp)
+    {
+        if (tmp->ifa_addr && tmp->ifa_addr->sa_family == AF_INET)
+        {
+            combo->insert(0, tmp->ifa_name);
+            if (!g_strcmp0(tmp->ifa_name, selectedOption))
+                selectedIncluded = 1;
+        }
+
+        tmp = tmp->ifa_next;
+    }
+    if (!selectedIncluded)
+        combo->insert(0, selectedOption); // if the interface in the prefs isn't currently up
+    combo->insert(0, strdup("")); // "don't bind" option
+    combo->set_active_text(selectedOption);
+    freeifaddrs(addrs);
+
+    combo->signal_changed().connect([this, combo, key]() { onBindIntComboChanged(*combo, key); });
     return combo;
 }
 
@@ -1028,6 +1071,8 @@ NetworkPage::NetworkPage(
 {
     portButton_->signal_clicked().connect([this]() { onPortTest(); });
     updatePortStatusText();
+
+    init_bind_interface_combo("bind_interface_combo", TR_KEY_bind_interface);
 
     prefsTag_ = core_->signal_prefs_changed().connect([this](auto key) { onCorePrefsChanged(key); });
 

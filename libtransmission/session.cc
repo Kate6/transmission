@@ -404,10 +404,12 @@ tr_session::BoundSocket::BoundSocket(
     IncomingCallback cb,
     void* cb_data)
     : cb_{ cb }
-    , cb_data_{ cb_data }
-    , socket_{ tr_netBindTCP(addr, port, false) }
+    , cb_data_{ cb_data } //, socket_{ tr_netBindTCP(addr, port, false) }
     , ev_{ event_new(evbase, socket_, EV_READ | EV_PERSIST, &BoundSocket::onCanRead, this) }
 {
+    auto* session = static_cast<tr_session*>(cb_data);
+    socket_ = tr_netBindTCP(addr, port, false, session->settings_.bind_interface.c_str());
+
     if (socket_ == TR_BAD_SOCKET)
     {
         return;
@@ -1200,6 +1202,29 @@ bool tr_sessionUsesAltSpeedTime(tr_session const* session)
     TR_ASSERT(session != nullptr);
 
     return session->alt_speeds_.is_scheduler_enabled();
+}
+
+char const* tr_sessionGetBindInterface(tr_session* const session)
+{
+    return session->settings_.bind_interface.c_str();
+}
+
+void tr_sessionSetBindInterface(tr_session* session, char const* bindInterface)
+{
+    TR_ASSERT(session != nullptr);
+
+    if (char const* newInterface = strdup(bindInterface); strcmp(session->settings_.bind_interface.c_str(), newInterface))
+    {
+        session->run_in_session_thread(
+            [session, newInterface]()
+            {
+                auto settings = session->settings_;
+                settings.bind_interface = newInterface;
+                session->setSettings(std::move(settings), true);
+            });
+    }
+
+    session->settings_.bind_interface = bindInterface;
 }
 
 void tr_sessionSetAltSpeedBegin(tr_session* session, size_t minutes_since_midnight)

@@ -458,7 +458,7 @@ private:
 
 struct tr_session;
 
-tr_socket_t tr_netBindTCP(tr_address const& addr, tr_port port, bool suppress_msgs);
+tr_socket_t tr_netBindTCP(tr_address const& addr, tr_port port, bool suppress_msgs, char const* bindInterface);
 
 [[nodiscard]] std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(
     tr_session* session,

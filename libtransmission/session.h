@@ -265,6 +265,11 @@ private:
             return session_.bind_address(type);
         }
 
+        char const* get_bind_interface() override
+        {
+            return session_.settings_.bind_interface.c_str();
+        }
+
         [[nodiscard]] tr_port port() const override
         {
             return session_.advertisedPeerPort();
@@ -406,6 +411,7 @@ public:
         std::string announce_ip;
         std::string bind_address_ipv4;
         std::string bind_address_ipv6;
+        std::string bind_interface;
         std::string blocklist_url = "http://www.example.com/blocklist";
         std::string default_trackers_str;
         std::string download_dir = tr_getDefaultDownloadDir();
@@ -433,6 +439,7 @@ public:
                 { TR_KEY_announce_ip_enabled, &announce_ip_enabled },
                 { TR_KEY_bind_address_ipv4, &bind_address_ipv4 },
                 { TR_KEY_bind_address_ipv6, &bind_address_ipv6 },
+                { TR_KEY_bind_interface, &bind_interface },
                 { TR_KEY_blocklist_enabled, &blocklist_enabled },
                 { TR_KEY_blocklist_url, &blocklist_url },
                 { TR_KEY_cache_size_mb, &cache_size_mbytes },
@@ -1173,6 +1180,8 @@ private:
     friend void tr_sessionSetUTPEnabled(tr_session* session, bool enabled);
     friend void tr_sessionUseAltSpeed(tr_session* session, bool enabled);
     friend void tr_sessionUseAltSpeedTime(tr_session* session, bool enabled);
+    friend char const* tr_sessionGetBindInterface(tr_session* const session);
+    friend void tr_sessionSetBindInterface(tr_session* session, char const* bindInterface);
 
 public:
     /// constexpr fields

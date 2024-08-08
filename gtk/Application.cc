@@ -1178,6 +1178,10 @@ void Application::Impl::on_prefs_changed(tr_quark const key)
         tr_sessionSetPeerPort(tr, gtr_pref_int_get(key));
         break;
 
+    case TR_KEY_bind_interface:
+        tr_sessionSetBindInterface(tr, gtr_pref_string_get(key).c_str());
+        break;
+
     case TR_KEY_blocklist_enabled:
         tr_blocklistSetEnabled(tr, gtr_pref_flag_get(key));
         break;

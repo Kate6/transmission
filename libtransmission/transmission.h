@@ -460,6 +460,8 @@ void tr_sessionSetPortForwardingEnabled(tr_session* session, bool enabled);
 uint16_t tr_sessionGetPeerPort(tr_session const* session);
 void tr_sessionSetPeerPort(tr_session* session, uint16_t port);
 
+void tr_sessionSetBindInterface(tr_session* session, char const* bindInterface);
+
 uint16_t tr_sessionSetPeerPortRandom(tr_session* session);
 
 bool tr_sessionGetPeerPortRandomOnStart(tr_session const* session);
