@@ -13,6 +13,10 @@ Visit https://transmissionbt.com/ for more information.
 
 Added a few command line switches to the transmission-cli client that I believe would be useful for my particular use case.
 
+GTK3 client - Added a "front and center" spinner to quickly set the incoming port without having to go into the preferences dialog.  
+
+Added "bind to interface" functionalty accessible from CLI or GTK3 clients.
+
 ## Documentation
 
 [Transmission's documentation](docs/README.md) is currently out-of-date, but the team has recently begun a new project to update it and is looking for volunteers. If you're interested, please feel free to submit pull requests!
