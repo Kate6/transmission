@@ -335,7 +335,11 @@ Gtk::ComboBox* PageBase::init_bind_interface_combo(Glib::ustring const& name, tr
     Gtk::ComboBoxText* combo = get_widget<Gtk::ComboBoxText>(name);
     char const* selectedOption = strdup(gtr_pref_string_get(key).c_str());
 
-    int selectedIncluded = 0;
+    // empty / no bind is always added on at the end
+    // so if it's the currently selected option, don't
+    // add it twice.
+    int selectedIncluded = (strcmp(selectedOption, "") == 0);
+
     getifaddrs(&addrs);
     tmp = addrs;
     while (tmp)
@@ -343,7 +347,7 @@ Gtk::ComboBox* PageBase::init_bind_interface_combo(Glib::ustring const& name, tr
         if (tmp->ifa_addr && tmp->ifa_addr->sa_family == AF_INET)
         {
             combo->insert(0, tmp->ifa_name);
-            if (!g_strcmp0(tmp->ifa_name, selectedOption))
+            if (!selectedIncluded && !g_strcmp0(tmp->ifa_name, selectedOption))
                 selectedIncluded = 1;
         }
 
