@@ -48,7 +48,7 @@ sig_atomic_t manualUpdate = false;
 
 char const* torrentPath = nullptr;
 
-auto constexpr Options = std::array<tr_option, 26>{
+auto constexpr Options = std::array<tr_option, 27>{
     { { 'b', "blocklist", "Enable peer blocklists", "b", false, nullptr },
       { 'B', "no-blocklist", "Disable peer blocklists", "B", false, nullptr },
       { 'd', "downlimit", "Set max download speed in " SPEED_K_STR, "d", true, "<speed>" },
@@ -80,6 +80,7 @@ auto constexpr Options = std::array<tr_option, 26>{
       { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", true, "<ipv6 addr>" },
       { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", true, "<ip addr>" },
       { 600, "bind-interface", "Bind to specific interface", "inf", true, "<interface>" },
+      { 's', "stalled-minutes", "Minutes with no data before failing", "s", true, "<minutes>" },
       { 0, nullptr, nullptr, nullptr, false, nullptr } }
 };
 
@@ -301,6 +302,10 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
             tr_variantDictAddBool(d, TR_KEY_sequentialDownload, true);
             break;
 
+        case 's':
+            tr_variantDictAddInt(d, TR_KEY_queue_stalled_minutes, atoi(my_optarg));
+            break;
+
         case TR_OPT_UNK:
             if (torrentPath == nullptr)
             {
@@ -486,6 +491,13 @@ int tr_main(int argc, char* argv[])
 
         auto const status_str = getStatusStr(st);
         printf("\r%-*s", TR_ARG_TUPLE(LineWidth, status_str.c_str()));
+
+        if (st->isStalled)
+        {
+            fprintf(stderr, "Torrent `%s' has stalled\n", torrentPath);
+            tr_sessionClose(h);
+            return EXIT_FAILURE;
+        }
 
         if (messageName[st->error])
         {
