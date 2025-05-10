@@ -44,6 +44,7 @@
 #include "libtransmission/port-forwarding.h"
 #include "libtransmission/quark.h"
 #include "libtransmission/rpc-server.h"
+#include <libtransmission/rpcimpl.h>
 #include "libtransmission/session.h"
 #include "libtransmission/session-alt-speeds.h"
 #include "libtransmission/timer-ev.h"
@@ -387,6 +388,82 @@ void tr_session::onIncomingPeerConnection(tr_socket_t fd, void* vsession)
     }
 }
 
+void tr_session::netlink_event_cb(evutil_socket_t fd, short events, void* vsession)
+{
+    char buf[8192];
+    struct iovec iov = { buf, sizeof(buf) };
+    struct sockaddr_nl sa;
+    struct msghdr msg = {
+        .msg_name = &sa,
+        .msg_namelen = sizeof(sa),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+    auto* session = static_cast<tr_session*>(vsession);
+    ssize_t len = recvmsg(fd, &msg, 0);
+    if (len < 0)
+    {
+        perror("recvmsg");
+        return;
+    }
+    for (struct nlmsghdr* nh = (struct nlmsghdr*)buf; NLMSG_OK(nh, (unsigned int)len); nh = NLMSG_NEXT(nh, len))
+    {
+        if (nh->nlmsg_type == NLMSG_DONE)
+            break;
+        if (nh->nlmsg_type == NLMSG_ERROR)
+        {
+            fprintf(stderr, "Netlink error\n");
+            continue;
+        }
+        if (nh->nlmsg_type == RTM_NEWLINK || nh->nlmsg_type == RTM_DELLINK)
+        {
+            struct ifinfomsg* ifi = (ifinfomsg*)NLMSG_DATA(nh);
+            int ifi_index = ifi->ifi_index;
+            char ifname[IF_NAMESIZE] = { 0 };
+            if_indextoname(ifi_index, ifname);
+            if (!strcmp(ifname, session->settings_.bind_interface.c_str()))
+            {
+                int is_up = ifi->ifi_flags & IFF_RUNNING;
+                char const* status = is_up ? "UP" : "DOWN";
+                printf("Interface %s (%d) is %s\n", ifname, ifi_index, status);
+                // void tr_sessionSetPaused(tr_session* session, bool is_paused)
+
+                session->pauseAllTorrents(!is_up);
+                tr_sessionSet(session, tr_sessionGetSettings(session));
+            }
+        }
+    }
+}
+
+void tr_session::createNetlinkSocket()
+{
+    printf("create netlink socket");
+    nl_sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    struct sockaddr_nl addr = { 0 };
+    addr.nl_family = AF_NETLINK;
+    addr.nl_groups = RTMGRP_LINK;
+    bind(nl_sock, (struct sockaddr*)&addr, sizeof(addr));
+    evutil_make_socket_nonblocking(nl_sock);
+    nl_event = event_new(event_base(), nl_sock, EV_READ | EV_PERSIST, netlink_event_cb, this);
+    event_add(nl_event, nullptr);
+}
+
+void tr_session::cleanupNetlinkSocket()
+{
+    printf("clean netlink socket");
+    event_free(nl_event);
+    close(nl_sock);
+}
+
+void tr_session::pauseAllTorrents(int pause)
+{
+    tr_variant request;
+
+    tr_variantInitDict(&request, 1);
+    tr_variantDictAddStrView(&request, TR_KEY_method, pause ? "torrent-stop"sv : "torrent-start"sv);
+    tr_rpc_request_exec(this, request, {});
+}
+
 tr_session::BoundSocket::BoundSocket(
     struct event_base* evbase,
     tr_address const& addr,
@@ -572,6 +649,8 @@ tr_session* tr_sessionInit(char const* config_dir, bool message_queueing_enabled
     auto lock = session->unique_lock();
     session->run_in_session_thread([&session, &data]() { session->initImpl(data); });
     data.done_cv.wait(lock); // wait for the session to be ready
+
+    session->createNetlinkSocket();
 
     return session;
 }

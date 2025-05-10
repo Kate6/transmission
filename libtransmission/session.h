@@ -35,6 +35,10 @@
 
 #include <event2/util.h> // for evutil_socket_t
 
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <net/if.h>
+
 #include "libtransmission/transmission.h"
 
 #include "libtransmission/announce-list.h"
@@ -1123,6 +1127,14 @@ private:
     void on_save_timer();
 
     static void onIncomingPeerConnection(tr_socket_t fd, void* vsession);
+
+    /* use netlink to watch for bound interface being removed or recreated */
+    static void netlink_event_cb(evutil_socket_t fd, short events, void* arg);
+    void createNetlinkSocket();
+    void cleanupNetlinkSocket();
+    void pauseAllTorrents(int);
+    int nl_sock;
+    struct event* nl_event;
 
     friend class libtransmission::test::SessionTest;
 
