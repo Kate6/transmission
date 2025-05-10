@@ -437,7 +437,7 @@ void tr_session::netlink_event_cb(evutil_socket_t fd, short events, void* vsessi
 
 void tr_session::createNetlinkSocket()
 {
-    printf("create netlink socket");
+    printf("create netlink socket\n");
     nl_sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
     struct sockaddr_nl addr = { 0 };
     addr.nl_family = AF_NETLINK;
@@ -450,7 +450,7 @@ void tr_session::createNetlinkSocket()
 
 void tr_session::cleanupNetlinkSocket()
 {
-    printf("clean netlink socket");
+    printf("clean netlink socket\n");
     event_free(nl_event);
     close(nl_sock);
 }
@@ -884,6 +884,7 @@ void tr_session::setSettings(tr_session::Settings&& settings_in, bool force)
     {
         if (auto const& val = new_settings.bind_address_ipv4; force || port_changed || val != old_settings.bind_address_ipv4)
         {
+            printf("rebinding ipv4\n");
             auto const addr = bind_address(TR_AF_INET);
             bound_ipv4_.emplace(event_base(), addr, local_peer_port_, &tr_session::onIncomingPeerConnection, this);
             addr_changed = true;
@@ -891,6 +892,7 @@ void tr_session::setSettings(tr_session::Settings&& settings_in, bool force)
 
         if (auto const& val = new_settings.bind_address_ipv6; force || port_changed || val != old_settings.bind_address_ipv6)
         {
+            printf("rebinding ipv6\n");
             auto const addr = bind_address(TR_AF_INET6);
             bound_ipv6_.emplace(event_base(), addr, local_peer_port_, &tr_session::onIncomingPeerConnection, this);
             addr_changed = true;
