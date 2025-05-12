@@ -421,7 +421,8 @@ void tr_session::netlink_event_cb(evutil_socket_t fd, short events, void* vsessi
             int ifi_index = ifi->ifi_index;
             char ifname[IF_NAMESIZE] = { 0 };
             if_indextoname(ifi_index, ifname);
-            if (!strcmp(ifname, session->settings_.bind_interface.c_str()))
+            char const* bindInterface = session->settings_.bind_interface.c_str();
+            if (strlen(bindInterface) > 0 && !strcmp(ifname, session->settings_.bind_interface.c_str()))
             {
                 int is_up = ifi->ifi_flags & IFF_RUNNING;
                 char const* status = is_up ? "UP" : "DOWN";
@@ -475,7 +476,7 @@ tr_session::BoundSocket::BoundSocket(
     , ev_{ event_new(evbase, socket_, EV_READ | EV_PERSIST, &BoundSocket::onCanRead, this) }
 {
     auto* session = static_cast<tr_session*>(cb_data);
-    socket_ = tr_netBindTCP(addr, port, false, session->settings_.bind_interface.c_str());
+    socket_ = tr_netBindTCP(addr, port, false, session);
 
     if (socket_ == TR_BAD_SOCKET)
     {
@@ -884,7 +885,7 @@ void tr_session::setSettings(tr_session::Settings&& settings_in, bool force)
     {
         if (auto const& val = new_settings.bind_address_ipv4; force || port_changed || val != old_settings.bind_address_ipv4)
         {
-            printf("rebinding ipv4\n");
+            //printf("rebinding ipv4\n");
             auto const addr = bind_address(TR_AF_INET);
             bound_ipv4_.emplace(event_base(), addr, local_peer_port_, &tr_session::onIncomingPeerConnection, this);
             addr_changed = true;
@@ -892,7 +893,7 @@ void tr_session::setSettings(tr_session::Settings&& settings_in, bool force)
 
         if (auto const& val = new_settings.bind_address_ipv6; force || port_changed || val != old_settings.bind_address_ipv6)
         {
-            printf("rebinding ipv6\n");
+            //printf("rebinding ipv6\n");
             auto const addr = bind_address(TR_AF_INET6);
             bound_ipv6_.emplace(event_base(), addr, local_peer_port_, &tr_session::onIncomingPeerConnection, this);
             addr_changed = true;
@@ -1141,6 +1142,13 @@ void tr_sessionSetIdleLimit(tr_session* session, uint16_t idle_minutes)
     TR_ASSERT(session != nullptr);
 
     session->settings_.idle_seeding_limit_minutes = idle_minutes;
+}
+
+void tr_pauseAllTorrents(tr_session* session, int pause)
+{
+    TR_ASSERT(session != nullptr);
+
+    session->pauseAllTorrents(pause);
 }
 
 bool tr_sessionIsIdleLimited(tr_session const* session)

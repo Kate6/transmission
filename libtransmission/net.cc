@@ -228,6 +228,26 @@ tr_socket_t createSocket(int domain, int type)
 }
 } // namespace
 
+int tr_bindSocketToInterface(int sockfd, tr_session* session)
+{
+    char const* bindInterface = tr_sessionGetBindInterface(session);
+    if (strlen(bindInterface) == 0)
+        return sockfd;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface)) == -1)
+    {
+        fprintf(stderr, "Error binding to %s: %s\n", bindInterface, strerror(errno));
+        if (errno == ENODEV)
+        {
+            // If RPC is already up, pause all torrents
+            tr_pauseAllTorrents(session, 1);
+            // also rebind to localhost interface
+            char const* loopbackif = "lo"; // Loopback interface
+            setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, loopbackif, strlen(loopbackif));
+        }
+    }
+    return sockfd;
+}
+
 tr_peer_socket tr_netOpenPeerSocket(tr_session* session, tr_socket_address const& socket_address, bool client_is_seed)
 {
     auto const& [addr, port] = socket_address;
@@ -246,8 +266,7 @@ tr_peer_socket tr_netOpenPeerSocket(tr_session* session, tr_socket_address const
         return {};
     }
 
-    char const* bindInterface = tr_sessionGetBindInterface(session);
-    setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
+    tr_bindSocketToInterface(s, session);
 
     // seeds don't need a big read buffer, so make it smaller
     if (client_is_seed)
@@ -307,7 +326,7 @@ tr_peer_socket tr_netOpenPeerSocket(tr_session* session, tr_socket_address const
 
 namespace
 {
-tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppress_msgs, int* err_out, char const* bindInterface)
+tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppress_msgs, int* err_out, tr_session* session)
 {
     TR_ASSERT(addr.is_valid());
 
@@ -325,7 +344,7 @@ tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppres
         return TR_BAD_SOCKET;
     }
 
-    setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
+    tr_bindSocketToInterface(fd, session);
 
     int optval = 1;
     (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<char const*>(&optval), sizeof(optval));
@@ -394,10 +413,10 @@ tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppres
 }
 } // namespace
 
-tr_socket_t tr_netBindTCP(tr_address const& addr, tr_port port, bool suppress_msgs, char const* bindInterface)
+tr_socket_t tr_netBindTCP(tr_address const& addr, tr_port port, bool suppress_msgs, tr_session* session)
 {
     int unused = 0;
-    return tr_netBindTCPImpl(addr, port, suppress_msgs, &unused, bindInterface);
+    return tr_netBindTCPImpl(addr, port, suppress_msgs, &unused, session);
 }
 
 std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session* session, tr_socket_t listening_sockfd)
@@ -413,8 +432,7 @@ std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session
         return {};
     }
 
-    char const* bindInterface = tr_sessionGetBindInterface(session);
-    setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
+    tr_bindSocketToInterface(sockfd, session);
 
     // get the address and port,
     // make the socket unblocking,

@@ -1179,6 +1179,7 @@ private:
     friend void tr_sessionSetEncryption(tr_session* session, tr_encryption_mode mode);
     friend void tr_sessionSetIdleLimit(tr_session* session, uint16_t idle_minutes);
     friend void tr_sessionSetIdleLimited(tr_session* session, bool is_limited);
+    friend void tr_pauseAllTorrents(tr_session* session, int pause);
     friend void tr_sessionSetIncompleteFileNamingEnabled(tr_session* session, bool enabled);
     friend void tr_sessionSetLPDEnabled(tr_session* session, bool enabled);
     friend void tr_sessionSetPaused(tr_session* session, bool is_paused);
