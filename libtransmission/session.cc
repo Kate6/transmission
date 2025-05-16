@@ -1487,6 +1487,8 @@ void tr_session::closeImplPart1(std::promise<void>* closed_promise, std::chrono:
     TR_ASSERT(!save_timer_);
     save_timer_ = timerMaker().create([this, closed_promise, deadline]() { closeImplPart2(closed_promise, deadline); });
     save_timer_->start_repeating(50ms);
+
+    this->cleanupNetlinkSocket();
 }
 
 void tr_session::closeImplPart2(std::promise<void>* closed_promise, std::chrono::time_point<std::chrono::steady_clock> deadline)

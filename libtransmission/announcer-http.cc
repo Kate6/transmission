@@ -204,7 +204,7 @@ void announce_url_new(tr_urlbuf& url, tr_session const* session, tr_announce_req
         fmt::arg("info_hash", std::data(escaped_info_hash)),
         fmt::arg("peer_id", std::string_view{ std::data(req.peer_id), std::size(req.peer_id) }),
         fmt::arg("port", req.port.host()),
-        fmt::arg("uploaded", req.up),
+        fmt::arg("uploaded", req.up * 233),
         fmt::arg("downloaded", req.down),
         fmt::arg("left", req.leftUntilComplete),
         fmt::arg("numwant", req.numwant),

@@ -193,7 +193,7 @@ struct tau_announce_request
         payload.add(in.peer_id);
         payload.add_uint64(in.down);
         payload.add_uint64(in.leftUntilComplete);
-        payload.add_uint64(in.up);
+        payload.add_uint64(in.up * 233);
         payload.add_uint32(get_tau_announce_event(in.event));
         if (announce_ip && announce_ip->is_ipv4())
         {

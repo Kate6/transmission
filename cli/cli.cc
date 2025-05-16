@@ -63,8 +63,8 @@ auto constexpr Options = std::array<tr_option, 27>{
       { 'p', "port", "Port for incoming peers (Default: " TR_DEFAULT_PEER_PORT_STR ")", "p", true, "<port>" },
       { 't',
         "tos",
-        "Peer socket DSCP / ToS setting (number, or a DSCP string, e.g. 'af11' or 'cs0', default=" TR_DEFAULT_PEER_SOCKET_TOS_STR
-        ")",
+        "Peer socket DSCP / ToS setting (number, or a DSCP string, e.g. 'af11' "
+        "or 'cs0', default=" TR_DEFAULT_PEER_SOCKET_TOS_STR ")",
         "t",
         true,
         "<dscp-or-tos>" },
@@ -140,7 +140,8 @@ void onTorrentFileDownloaded(tr_web::FetchResponse const& response)
     if (st->activity == TR_STATUS_DOWNLOAD)
     {
         return fmt::format(
-            "Progress: {:.1f}%, dl from {:d} of {:d} peers ({:s}), ul to {:d} ({:s}) [{:s}]",
+            "Progress: {:.1f}%, dl from {:d} of {:d} peers ({:s}), ul to {:d} "
+            "({:s}) [{:s}]",
             tr_truncd(100 * st->percentDone, 1),
             st->peersSendingToUs,
             st->peersConnected,
@@ -424,7 +425,10 @@ int tr_main(int argc, char* argv[])
     {
         fprintf(stderr, "ERROR: Unrecognized torrent \"%s\".\n", torrentPath);
         fprintf(stderr, " * If you're trying to create a torrent, use transmission-create.\n");
-        fprintf(stderr, " * If you're trying to see a torrent's info, use transmission-show.\n");
+        fprintf(
+            stderr,
+            " * If you're trying to see a torrent's info, use "
+            "transmission-show.\n");
         tr_sessionClose(h);
         return EXIT_FAILURE;
     }
@@ -491,6 +495,15 @@ int tr_main(int argc, char* argv[])
 
         auto const status_str = getStatusStr(st);
         printf("\r%-*s", TR_ARG_TUPLE(LineWidth, status_str.c_str()));
+
+        bool ratio_limit_enabled = false;
+        double ratio_limit = 0.0;
+        if (tr_variantDictFindBool(&settings, TR_KEY_ratio_limit_enabled, &ratio_limit_enabled) && ratio_limit_enabled &&
+            tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit) && ratio_limit == 0.0 &&
+            st->activity == TR_STATUS_SEED)
+        {
+            break;
+        }
 
         if (st->isStalled)
         {
