@@ -60,7 +60,7 @@ int main(int argc, char** argv)
     /* init glib/gtk */
     Gio::init();
     Glib::init();
-    Glib::set_application_name(_("Transmission"));
+    Glib::set_application_name(_("Kate's Slightly Modded Transmission"));
 
     /* Workaround "..." */
     Gio::File::create_for_path(".");

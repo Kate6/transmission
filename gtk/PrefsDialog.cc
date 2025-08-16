@@ -41,10 +41,11 @@
 #include <gtkmm/eventcontrollerfocus.h>
 #endif
 
-#include <fmt/format.h>
 #include <ifaddrs.h>
 #include <stdio.h>
+
 #include <fmt/core.h>
+#include <fmt/format.h>
 
 #include <array>
 #include <limits>
