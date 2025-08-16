@@ -103,7 +103,7 @@ public:
     [[nodiscard]] static bool limit_reached(tr_session const* session) noexcept;
 
 private:
-    enum class Type
+    enum class Type : uint8_t
     {
         None,
         TCP,
@@ -114,7 +114,7 @@ private:
 
     enum Type type_ = Type::None;
 
+    // TODO: Re-enable after setting readability-identifier-naming.PrivateMemberSuffix to _
+    // NOLINTNEXTLINE(readability-identifier-naming)
     static inline std::atomic<size_t> n_open_sockets_ = {};
 };
-
-tr_peer_socket tr_netOpenPeerSocket(tr_session* session, tr_socket_address const& socket_address, bool client_is_seed);
