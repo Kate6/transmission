@@ -14,6 +14,7 @@
 #include <iterator> // for std::back_inserter
 #include <limits> // std::numeric_limits
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -437,13 +438,16 @@ void tr_session::netlink_event_cb(evutil_socket_t fd, short events, void* vsessi
             int ifi_index = ifi->ifi_index;
             char ifname[IF_NAMESIZE] = { 0 };
             if_indextoname(ifi_index, ifname);
-            char const* bindInterface = session->settings_.bind_interface.c_str();
-            if (strlen(bindInterface) > 0 && !strcmp(ifname, session->settings_.bind_interface.c_str()))
+
+            // Acquire lock to safely read bind_interface
+            auto const lock = session->unique_lock();
+            std::string const bind_interface = session->settings_.bind_interface;
+
+            if (!bind_interface.empty() && bind_interface == ifname)
             {
                 int is_up = ifi->ifi_flags & IFF_RUNNING;
                 char const* status = is_up ? "UP" : "DOWN";
-                printf("Interface %s (%d) is %s\n", ifname, ifi_index, status);
-                // void tr_sessionSetPaused(tr_session* session, bool is_paused)
+                tr_logAddInfo(fmt::format("Interface {} ({}) is {}", ifname, ifi_index, status));
 
                 session->pauseAllTorrents(!is_up);
                 tr_sessionSet(session, tr_sessionGetSettings(session));
@@ -454,22 +458,78 @@ void tr_session::netlink_event_cb(evutil_socket_t fd, short events, void* vsessi
 
 void tr_session::createNetlinkSocket()
 {
-    printf("create netlink socket\n");
+    tr_logAddDebug("Creating netlink socket for interface monitoring");
+
     nl_sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    if (nl_sock == TR_BAD_SOCKET)
+    {
+        int const err = sockerrno;
+        tr_logAddWarn(fmt::format("Failed to create netlink socket: {} ({})", tr_strerror(err), err));
+        return;
+    }
+
     struct sockaddr_nl addr = { 0 };
     addr.nl_family = AF_NETLINK;
     addr.nl_groups = RTMGRP_LINK;
-    bind(nl_sock, (struct sockaddr*)&addr, sizeof(addr));
-    evutil_make_socket_nonblocking(nl_sock);
+
+    if (bind(nl_sock, (struct sockaddr*)&addr, sizeof(addr)) == -1)
+    {
+        int const err = sockerrno;
+        tr_logAddWarn(fmt::format("Failed to bind netlink socket: {} ({})", tr_strerror(err), err));
+        tr_net_close_socket(nl_sock);
+        nl_sock = TR_BAD_SOCKET;
+        return;
+    }
+
+    if (evutil_make_socket_nonblocking(nl_sock) == -1)
+    {
+        int const err = sockerrno;
+        tr_logAddWarn(fmt::format("Failed to set netlink socket to non-blocking: {} ({})", tr_strerror(err), err));
+        tr_net_close_socket(nl_sock);
+        nl_sock = TR_BAD_SOCKET;
+        return;
+    }
+
     nl_event = event_new(event_base(), nl_sock, EV_READ | EV_PERSIST, netlink_event_cb, this);
-    event_add(nl_event, nullptr);
+    if (nl_event == nullptr)
+    {
+        tr_logAddWarn("Failed to create netlink event");
+        tr_net_close_socket(nl_sock);
+        nl_sock = TR_BAD_SOCKET;
+        return;
+    }
+
+    if (event_add(nl_event, nullptr) == -1)
+    {
+        int const err = sockerrno;
+        tr_logAddWarn(fmt::format("Failed to add netlink event: {} ({})", tr_strerror(err), err));
+        event_free(nl_event);
+        nl_event = nullptr;
+        tr_net_close_socket(nl_sock);
+        nl_sock = TR_BAD_SOCKET;
+        return;
+    }
+
+    tr_logAddDebug("Netlink socket created successfully");
 }
 
 void tr_session::cleanupNetlinkSocket()
 {
-    printf("clean netlink socket\n");
-    event_free(nl_event);
-    close(nl_sock);
+    tr_logAddDebug("Cleaning up netlink socket");
+
+    if (nl_event != nullptr)
+    {
+        event_free(nl_event);
+        nl_event = nullptr;
+    }
+
+    if (nl_sock != TR_BAD_SOCKET)
+    {
+        tr_net_close_socket(nl_sock);
+        nl_sock = TR_BAD_SOCKET;
+    }
+
+    tr_logAddDebug("Netlink socket cleanup complete");
 }
 
 void tr_session::pauseAllTorrents(int pause)
@@ -1343,19 +1403,26 @@ char const* tr_sessionGetBindInterface(tr_session* const session)
 void tr_sessionSetBindInterface(tr_session* session, char const* bindInterface)
 {
     TR_ASSERT(session != nullptr);
+    TR_ASSERT(bindInterface != nullptr);
 
-    if (char const* newInterface = strdup(bindInterface); strcmp(session->settings_.bind_interface.c_str(), newInterface))
+    auto const lock = session->unique_lock();
+
+    if (session->settings_.bind_interface != bindInterface)
     {
+        // Create a copy of the interface name to pass to the session thread
+        auto new_interface = std::string{ bindInterface };
+
         session->run_in_session_thread(
-            [session, newInterface]()
+            [session, new_interface]()
             {
                 auto settings = session->settings_;
-                settings.bind_interface = newInterface;
+                settings.bind_interface = new_interface;
                 session->setSettings(std::move(settings), true);
             });
-    }
 
-    session->settings_.bind_interface = bindInterface;
+        // Update the settings with the new interface name
+        session->settings_.bind_interface = new_interface;
+    }
 }
 
 void tr_sessionSetAltSpeedBegin(tr_session* session, size_t minutes_since_midnight)

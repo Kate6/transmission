@@ -207,21 +207,64 @@ tr_socket_t createSocket(int domain, int type)
 
 int tr_bindSocketToInterface(int sockfd, tr_session* session)
 {
-    char const* bindInterface = tr_sessionGetBindInterface(session);
-    if (strlen(bindInterface) == 0)
-        return sockfd;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface)) == -1)
+    char const* bind_interface = tr_sessionGetBindInterface(session);
+
+    // If no interface is specified, return the socket as-is
+    if (bind_interface == nullptr || strlen(bind_interface) == 0)
     {
-        fprintf(stderr, "Error binding to %s: %s\n", bindInterface, strerror(errno));
-        if (errno == ENODEV)
+        return sockfd;
+    }
+
+    // Attempt to bind the socket to the specified interface
+    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, bind_interface, strlen(bind_interface)) == -1)
+    {
+        int const err = sockerrno;
+        tr_logAddWarn(fmt::format("Failed to bind socket to interface '{}': {} ({})", bind_interface, tr_strerror(err), err));
+
+        // Handle specific error cases
+        if (err == ENODEV)
         {
-            // If RPC is already up, pause all torrents
+            // Interface does not exist - pause all torrents and attempt fallback to loopback
+            tr_logAddWarn(fmt::format("Interface '{}' not found, pausing all torrents", bind_interface));
             tr_pauseAllTorrents(session, 1);
-            // also rebind to localhost interface
-            char const* loopbackif = "lo"; // Loopback interface
-            setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, loopbackif, strlen(loopbackif));
+
+            // Attempt to bind to loopback interface as fallback
+            char const* loopback_if = "lo";
+            if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, loopback_if, strlen(loopback_if)) == -1)
+            {
+                int const fallback_err = sockerrno;
+                tr_logAddWarn(fmt::format(
+                    "Failed to bind socket to fallback loopback interface: {} ({})",
+                    tr_strerror(fallback_err),
+                    fallback_err));
+                return TR_BAD_SOCKET;
+            }
+        }
+        else if (err == EPERM)
+        {
+            // Permission denied - likely running without CAP_NET_ADMIN
+            tr_logAddWarn("Permission denied binding to interface - may require CAP_NET_ADMIN capability");
+            return TR_BAD_SOCKET;
+        }
+        else if (err == ENOMEM || err == ENOBUFS)
+        {
+            // Resource exhaustion
+            tr_logAddWarn(fmt::format(
+                "System resource exhaustion while binding to interface '{}': {} ({})",
+                bind_interface,
+                tr_strerror(err),
+                err));
+            return TR_BAD_SOCKET;
+        }
+        else
+        {
+            // Other errors
+            tr_logAddWarn(
+                fmt::format("Unexpected error binding to interface '{}': {} ({})", bind_interface, tr_strerror(err), err));
+            return TR_BAD_SOCKET;
         }
     }
+
     return sockfd;
 }
 tr_socket_t tr_net_open_peer_socket(tr_session* session, tr_socket_address const& socket_address, bool client_is_seed)
