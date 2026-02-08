@@ -48,44 +48,36 @@ sig_atomic_t manualUpdate = false;
 
 char const* torrentPath = nullptr;
 
-auto constexpr Options = std::array<tr_option, 27>{
-    { { 'b', "blocklist", "Enable peer blocklists", "b", false, nullptr },
-      { 'B', "no-blocklist", "Disable peer blocklists", "B", false, nullptr },
-      { 'd', "downlimit", "Set max download speed in " SPEED_K_STR, "d", true, "<speed>" },
-      { 'D', "no-downlimit", "Don't limit the download speed", "D", false, nullptr },
-      { 910, "encryption-required", "Encrypt all peer connections", "er", false, nullptr },
-      { 911, "encryption-preferred", "Prefer encrypted peer connections", "ep", false, nullptr },
-      { 912, "encryption-tolerated", "Prefer unencrypted peer connections", "et", false, nullptr },
-      { 'f', "finish", "Run a script when the torrent finishes", "f", true, "<script>" },
-      { 'g', "config-dir", "Where to find configuration files", "g", true, "<path>" },
-      { 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", false, nullptr },
-      { 'M', "no-portmap", "Disable portmapping", "M", false, nullptr },
-      { 'p', "port", "Port for incoming peers (Default: " TR_DEFAULT_PEER_PORT_STR ")", "p", true, "<port>" },
-      { 't',
-        "tos",
-        "Peer socket DSCP / ToS setting (number, or a DSCP string, e.g. 'af11' "
-        "or 'cs0', default=" TR_DEFAULT_PEER_SOCKET_TOS_STR ")",
-        "t",
-        true,
-        "<dscp-or-tos>" },
-      { 'u', "uplimit", "Set max upload speed in " SPEED_K_STR, "u", true, "<speed>" },
-      { 'U', "no-uplimit", "Don't limit the upload speed", "U", false, nullptr },
-      { 'v', "verify", "Verify the specified torrent", "v", false, nullptr },
-      { 'V', "version", "Show version number and exit", "V", false, nullptr },
-      { 'w', "download-dir", "Where to save downloaded data", "w", true, "<path>" },
-      { 500, "sequential-download", "Download pieces sequentially", "seq", false, nullptr },
-      { 'S', "dont-seed", "Don\'t seed longer than absolutely necessary", "S", false, nullptr },
-      { 'E', "simple-peer", "Disable uTP, PEX and DHT", "E", false, nullptr },
-      { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", true, "<ipv4 addr>" },
-      { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", true, "<ipv6 addr>" },
-      { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", true, "<ip addr>" },
-      { 600, "bind-interface", "Bind to specific interface", "inf", true, "<interface>" },
-      { 's', "stalled-minutes", "Minutes with no data before failing", "s", true, "<minutes>" },
-      { 0, nullptr, nullptr, nullptr, false, nullptr } }
-};
+auto constexpr Options = std::array<tr_option, 27>{{
+    tr_option{ 'b', "blocklist", "Enable peer blocklists", "b", tr_option::Arg::None, nullptr },
+    tr_option{ 'B', "no-blocklist", "Disable peer blocklists", "B", tr_option::Arg::None, nullptr },
+    tr_option{ 'd', "downlimit", "Set max download speed in kB/s", "d", tr_option::Arg::Required, "<speed>" },
+    tr_option{ 'D', "no-downlimit", "Don't limit the download speed", "D", tr_option::Arg::None, nullptr },
+    tr_option{ 910, "encryption-required", "Encrypt all peer connections", "er", tr_option::Arg::None, nullptr },
+    tr_option{ 911, "encryption-preferred", "Prefer encrypted peer connections", "ep", tr_option::Arg::None, nullptr },
+    tr_option{ 912, "encryption-tolerated", "Prefer unencrypted peer connections", "et", tr_option::Arg::None, nullptr },
+    tr_option{ 'f', "finish", "Run a script when the torrent finishes", "f", tr_option::Arg::Required, "<script>" },
+    tr_option{ 'g', "config-dir", "Where to find configuration files", "g", tr_option::Arg::Required, "<path>" },
+    tr_option{ 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", tr_option::Arg::None, nullptr },
+    tr_option{ 'M', "no-portmap", "Disable portmapping", "M", tr_option::Arg::None, nullptr },
+    tr_option{ 'p', "port", "Port for incoming peers", "p", tr_option::Arg::Required, "<port>" },
+    tr_option{ 't', "tos", "Peer socket DSCP / ToS setting", "t", tr_option::Arg::Required, "<dscp-or-tos>" },
+    tr_option{ 'u', "uplimit", "Set max upload speed in kB/s", "u", tr_option::Arg::Required, "<speed>" },
+    tr_option{ 'U', "no-uplimit", "Don't limit the upload speed", "U", tr_option::Arg::None, nullptr },
+    tr_option{ 'v', "verify", "Verify the specified torrent", "v", tr_option::Arg::None, nullptr },
+    tr_option{ 'V', "version", "Show version number and exit", "V", tr_option::Arg::None, nullptr },
+    tr_option{ 'w', "download-dir", "Where to save downloaded data", "w", tr_option::Arg::Required, "<path>" },
+    tr_option{ 500, "sequential-download", "Download pieces sequentially", "seq", tr_option::Arg::None, nullptr },
+    tr_option{ 'S', "dont-seed", "Don't seed longer than absolutely necessary", "S", tr_option::Arg::None, nullptr },
+    tr_option{ 'E', "simple-peer", "Disable uTP, PEX and DHT", "E", tr_option::Arg::None, nullptr },
+    tr_option{ 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", tr_option::Arg::Required, "<ipv4 addr>" },
+    tr_option{ 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", tr_option::Arg::Required, "<ipv6 addr>" },
+    tr_option{ 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", tr_option::Arg::Required, "<ip addr>" },
+    tr_option{ 600, "bind-interface", "Bind to specific interface", "inf", tr_option::Arg::Required, "<interface>" },
+    tr_option{ 's', "stalled-minutes", "Minutes with no data before failing", "s", tr_option::Arg::Required, "<minutes>" },
+    tr_option{ 0, nullptr, nullptr, nullptr, tr_option::Arg::None, nullptr }
+}};
 
-namespace
-{
 int parseCommandLine(tr_variant*, int argc, char const** argv);
 
 void sigHandler(int signal);
@@ -144,13 +136,13 @@ void onTorrentFileDownloaded(tr_web::FetchResponse const& response)
         return fmt::format(
             "Progress: {:.1f}%, dl from {:d} of {:d} peers ({:s}), ul to {:d} "
             "({:s}) [{:s}]",
-            tr_truncd(100 * st->percentDone, 1),
-            st->peersSendingToUs,
-            st->peersConnected,
-            Speed{ st->pieceDownloadSpeed_KBps, Speed::Units::KByps }.to_string(),
-            st->peersGettingFromUs,
-            Speed{ st->pieceUploadSpeed_KBps, Speed::Units::KByps }.to_string(),
-            tr_strlratio(st->ratio));
+            tr_truncd(100 * st.percent_done, 1),
+            st.peers_sending_to_us,
+            st.peers_connected,
+            st.piece_download_speed.to_string(),
+            st.peers_getting_from_us,
+            st.piece_upload_speed.to_string(),
+            tr_strlratio(st.upload_ratio));
     }
 
     if (st.activity == TR_STATUS_SEED)
@@ -491,21 +483,21 @@ int tr_main(int argc, char* argv[])
         double ratio_limit = 0.0;
         if (tr_variantDictFindBool(&settings, TR_KEY_ratio_limit_enabled, &ratio_limit_enabled) && ratio_limit_enabled &&
             tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit) && ratio_limit == 0.0 &&
-            st->activity == TR_STATUS_SEED)
+            st.activity == TR_STATUS_SEED)
         {
             break;
         }
 
-        if (st->isStalled)
+        if (st.is_stalled)
         {
             fprintf(stderr, "Torrent `%s' has stalled\n", torrentPath);
             tr_sessionClose(h);
             return EXIT_FAILURE;
         }
 
-        if (messageName[st->error])
+        if (st.error != tr_stat::Error::Ok)
         {
-            fmt::print(stderr, "\n{:s}: {:s}\n", prefix, st.error_string);
+            fmt::print(stderr, "\n{:s}: {:s}\n", getErrorMessagePrefix(st.error), st.error_string);
         }
     }
 

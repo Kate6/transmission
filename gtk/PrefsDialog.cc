@@ -58,7 +58,7 @@
 
 #include <sys/types.h>
 
-using namespace libtransmission::Values;
+using namespace tr::Values;
 
 /**
 ***

@@ -661,6 +661,9 @@ endif()
 tr_add_external_auto_library(WIDE_INTEGER WideInteger
     SUBPROJECT
     SOURCE_DIR wide-integer)
+if(TARGET WideInteger AND NOT TARGET WideInteger::WideInteger)
+    add_library(WideInteger::WideInteger ALIAS WideInteger)
+endif()
 add_library(transmission::WideInteger INTERFACE IMPORTED)
 target_link_libraries(transmission::WideInteger
     INTERFACE
