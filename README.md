@@ -40,8 +40,8 @@ For a more detailed description, and dependencies, visit [How to Build Transmiss
 ### Building a Transmission release from the command line
 
 ```bash
-$ tar xf transmission-4.0.6.tar.xz
-$ cd transmission-4.0.6
+$ tar xf transmission-4.1.0.tar.xz
+$ cd transmission-4.1.0
 # Use -DCMAKE_BUILD_TYPE=RelWithDebInfo to build optimized binary with debug information. (preferred)
 # Use -DCMAKE_BUILD_TYPE=Release to build full optimized binary.
 $ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -103,7 +103,7 @@ See [language translations](docs/Translating.md).
   </tr>
   <tr>
    <td align="center"><img alt="[SignPath]" src="https://avatars.githubusercontent.com/u/34448643" height="30"/></td>
-   <td>Free code signing on Windows provided by <a href="https://signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a></td>
+   <td>Free code signing on Windows provided by <a href="https://signpath.io/?utm_source=foundation&utm_medium=github&utm_campaign=transmission">SignPath.io</a>, certificate by <a href="https://signpath.org/?utm_source=foundation&utm_medium=github&utm_campaign=transmission">SignPath Foundation</a></td>
   </tr>
  </tbody>
 </table>

@@ -106,10 +106,14 @@ Prefs.ContrastMode = 'contrast-mode';
 Prefs.FilterActive = 'active';
 Prefs.FilterAll = 'all';
 Prefs.FilterDownloading = 'downloading';
+Prefs.FilterError = 'error';
 Prefs.FilterFinished = 'finished';
 Prefs.FilterMode = 'filter-mode';
 Prefs.FilterPaused = 'paused';
+Prefs.FilterPrivate = 'private';
+Prefs.FilterPublic = 'public';
 Prefs.FilterSeeding = 'seeding';
+Prefs.HighlightColor = 'highlight-color';
 Prefs.NotificationsEnabled = 'notifications-enabled';
 Prefs.RefreshRate = 'refresh-rate-sec';
 Prefs.SortAscending = 'ascending';
@@ -128,10 +132,12 @@ Prefs.SortMode = 'sort-mode';
 Prefs._Defaults = {
   [Prefs.AltSpeedEnabled]: false,
   [Prefs.DisplayMode]: Prefs.DisplayFull,
-  [Prefs.ContrastMode]: window.matchMedia('(prefers-contrast: more)').matches
+  [Prefs.ContrastMode]: globalThis.matchMedia('(prefers-contrast: more)')
+    .matches
     ? Prefs.ContrastMore
     : Prefs.ContrastLess,
   [Prefs.FilterMode]: Prefs.FilterAll,
+  [Prefs.HighlightColor]: 'AccentColor',
   [Prefs.NotificationsEnabled]: false,
   [Prefs.RefreshRate]: 5,
   [Prefs.SortDirection]: Prefs.SortAscending,

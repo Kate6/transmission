@@ -163,7 +163,7 @@ public:
         return optional_args_[mode].paused_;
     }
 
-    TR_CONSTEXPR20 void set_paused(tr_ctorMode const mode, bool const paused)
+    constexpr void set_paused(tr_ctorMode const mode, bool const paused)
     {
         optional_args_[mode].paused_ = paused;
     }
@@ -175,7 +175,7 @@ public:
         return optional_args_[mode].peer_limit_;
     }
 
-    TR_CONSTEXPR20 void set_peer_limit(tr_ctorMode const mode, uint16_t const peer_limit)
+    constexpr void set_peer_limit(tr_ctorMode const mode, uint16_t const peer_limit)
     {
         optional_args_[mode].peer_limit_ = peer_limit;
     }
@@ -218,11 +218,22 @@ public:
         optional_args_[mode].sequential_download_ = seq;
     }
 
+    [[nodiscard]] constexpr auto const& sequential_download_from_piece(tr_ctorMode const mode) const noexcept
+    {
+        return optional_args_[mode].sequential_download_from_piece_;
+    }
+
+    constexpr void set_sequential_download_from_piece(tr_ctorMode const mode, tr_piece_index_t const piece) noexcept
+    {
+        optional_args_[mode].sequential_download_from_piece_ = piece;
+    }
+
 private:
     struct OptionalArgs
     {
         std::optional<bool> paused_;
         std::optional<bool> sequential_download_;
+        std::optional<tr_piece_index_t> sequential_download_from_piece_;
         std::optional<uint16_t> peer_limit_;
         std::string download_dir_;
     };

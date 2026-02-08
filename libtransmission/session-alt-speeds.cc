@@ -3,6 +3,7 @@
 // or any future license endorsed by Mnemosyne LLC.
 // License text can be found in the licenses/ folder.
 
+#include <chrono>
 #include <cstddef> // size_t
 #include <ctime>
 #include <utility>
@@ -31,7 +32,7 @@ void tr_session_alt_speeds::update_minutes()
 
     for (int day = 0; day < 7; ++day)
     {
-        if ((static_cast<tr_sched_day>(settings_.use_on_these_weekdays) & (1 << day)) != 0)
+        if ((settings_.use_on_these_weekdays & (1 << day)) != 0)
         {
             auto const begin = settings_.minute_begin;
             auto const end = settings_.minute_end > settings_.minute_begin ? settings_.minute_end :
@@ -76,9 +77,9 @@ void tr_session_alt_speeds::set_active(bool active, ChangeReason reason, bool fo
     }
 }
 
-[[nodiscard]] bool tr_session_alt_speeds::is_active_minute(time_t time) const noexcept
+[[nodiscard]] bool tr_session_alt_speeds::is_active_minute(time_t time) const
 {
-    auto const tm = fmt::localtime(time);
+    auto const tm = *std::localtime(&time);
 
     size_t minute_of_the_week = (tm.tm_wday * MinutesPerDay) + (tm.tm_hour * MinutesPerHour) + tm.tm_min;
 

@@ -203,7 +203,7 @@ using tr_peer_callback_generic = void (*)(tr_peer* peer, tr_peer_event const& ev
  */
 struct tr_peer
 {
-    using Speed = libtransmission::Values::Speed;
+    using Speed = tr::Values::Speed;
 
     explicit tr_peer(tr_torrent const& tor);
     virtual ~tr_peer() = default;
@@ -264,6 +264,9 @@ struct tr_peer
 
     // how many requests we made to this peer and then canceled
     tr_recentHistory<uint16_t> cancels_sent_to_peer;
+
+    tr_recentHistory<size_t> bytes_sent_to_client;
+    tr_recentHistory<size_t> bytes_sent_to_peer;
 };
 
 // ---

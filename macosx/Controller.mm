@@ -2,12 +2,17 @@
 // It may be used under the MIT (SPDX: MIT) license.
 // License text can be found in the licenses/ folder.
 
-@import IOKit;
-@import IOKit.pwr_mgt;
+#if __has_feature(modules)
 @import Carbon;
 @import UserNotifications;
 
 @import Sparkle;
+#else
+#import <Carbon/Carbon.h>
+#import <UserNotifications/UserNotifications.h>
+
+#import <Sparkle/Sparkle.h>
+#endif
 
 #include <atomic> /* atomic, atomic_fetch_add_explicit, memory_order_relaxed */
 
@@ -56,6 +61,8 @@
 #import "ExpandedPathToPathTransformer.h"
 #import "ExpandedPathToIconTransformer.h"
 #import "VersionComparator.h"
+#import "PowerManager.h"
+#import "Utils.h"
 
 typedef NSString* ToolbarItemIdentifier NS_TYPED_EXTENSIBLE_ENUM;
 
@@ -113,8 +120,8 @@ static NSString* const kTorrentTableViewDataType = @"TorrentTableViewDataType";
 static CGFloat const kRowHeightRegular = 62.0;
 static CGFloat const kRowHeightSmall = 22.0;
 
-static CGFloat const kStatusBarHeight = 21.0;
-static CGFloat const kFilterBarHeight = 23.0;
+static CGFloat const kStatusBarHeight = 24.0;
+static CGFloat const kFilterBarHeight = 24.0;
 static CGFloat const kBottomBarHeight = 24.0;
 
 static NSTimeInterval const kUpdateUISeconds = 1.0;
@@ -130,7 +137,7 @@ static NSTimeInterval const kDonateNagTime = 60 * 60 * 24 * 7;
 
 static void initUnits()
 {
-    using Config = libtransmission::Values::Config;
+    using Config = tr::Values::Config;
 
     // use a random value to avoid possible pluralization issues with 1 or 0 (an example is if we use 1 for bytes,
     // we'd get "byte" when we'd want "bytes" for the generic libtransmission value at least)
@@ -174,11 +181,6 @@ static tr_rpc_callback_status rpcCallback([[maybe_unused]] tr_session* handle, t
 {
     [(__bridge Controller*)controller rpcCallback:type forTorrentStruct:torrentStruct];
     return TR_RPC_NOREMOVE; //we'll do the remove manually
-}
-
-static void sleepCallback(void* controller, io_service_t /*y*/, natural_t messageType, void* messageArgument)
-{
-    [(__bridge Controller*)controller sleepCallback:messageType argument:messageArgument];
 }
 
 // 2.90 was infected with ransomware which we now check for and attempt to remove
@@ -271,11 +273,11 @@ static void removeKeRangerRansomware()
     NSLog(@"OSX.KeRanger.A ransomware removal completed, proceeding to normal operation");
 }
 
-@interface Controller ()<UNUserNotificationCenterDelegate, NSURLSessionDataDelegate, NSURLSessionDownloadDelegate>
+@interface Controller ()<UNUserNotificationCenterDelegate, NSURLSessionDataDelegate, NSURLSessionDownloadDelegate, PowerManagerDelegate>
 
 @property(nonatomic) IBOutlet NSWindow* fWindow;
-@property(nonatomic) IBOutlet NSStackView* fStackView;
-@property(nonatomic) NSArray* fStackViewHeightConstraints;
+@property(nonatomic) NSLayoutConstraint* fMinHeightConstraint;
+@property(nonatomic) NSLayoutConstraint* fFixedHeightConstraint;
 @property(nonatomic) IBOutlet TorrentTableView* fTableView;
 
 @property(nonatomic) IBOutlet NSMenuItem* fOpenIgnoreDownloadFolder;
@@ -311,7 +313,6 @@ static void removeKeRangerRansomware()
 
 @property(nonatomic) DragOverlayWindow* fOverlayWindow;
 
-@property(nonatomic) io_connect_t fRootPort;
 @property(nonatomic) NSTimer* fTimer;
 
 @property(nonatomic) StatusBarController* fStatusBar;
@@ -338,7 +339,6 @@ static void removeKeRangerRansomware()
 @property(nonatomic) BOOL fGlobalPopoverShown;
 @property(nonatomic) NSView* fPositioningView;
 @property(nonatomic) BOOL fSoundPlaying;
-@property(nonatomic) id fNoNapActivity;
 
 @end
 
@@ -505,6 +505,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
             TR_KEY_incomplete_dir,
             [_fDefaults stringForKey:@"IncompleteDownloadFolder"].stringByExpandingTildeInPath.UTF8String);
         tr_variantDictAddBool(&settings, TR_KEY_incomplete_dir_enabled, [_fDefaults boolForKey:@"UseIncompleteDownloadFolder"]);
+        tr_variantDictAddBool(&settings, TR_KEY_torrent_complete_verify_enabled, [_fDefaults boolForKey:@"VerifyDataOnCompletion"]);
         tr_variantDictAddBool(&settings, TR_KEY_lpd_enabled, [_fDefaults boolForKey:@"LocalPeerDiscoveryGlobal"]);
         tr_variantDictAddInt(&settings, TR_KEY_message_level, TR_LOG_DEBUG);
         tr_variantDictAddInt(&settings, TR_KEY_peer_limit_global, [_fDefaults integerForKey:@"PeersTotal"]);
@@ -531,7 +532,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
         //hidden pref
         if ([_fDefaults objectForKey:@"PeerSocketTOS"])
         {
-            tr_variantDictAddStr(&settings, TR_KEY_peer_socket_tos, [_fDefaults stringForKey:@"PeerSocketTOS"].UTF8String);
+            tr_variantDictAddStr(&settings, TR_KEY_peer_socket_diffserv, [_fDefaults stringForKey:@"PeerSocketTOS"].UTF8String);
         }
 
         tr_variantDictAddBool(&settings, TR_KEY_pex_enabled, [_fDefaults boolForKey:@"PEXGlobal"]);
@@ -568,7 +569,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
         initUnits();
 
         auto const default_config_dir = tr_getDefaultConfigDir("Transmission");
-        _fLib = tr_sessionInit(default_config_dir.c_str(), YES, settings);
+        _fLib = tr_sessionInit(default_config_dir, YES, settings);
         _fConfigDirectory = @(default_config_dir.c_str());
 
         tr_sessionSetIdleLimitHitCallback(_fLib, onIdleLimitHit, (__bridge void*)(self));
@@ -650,12 +651,19 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     self.fTableView.floatsGroupRows = YES;
     //self.fTableView.usesAlternatingRowBackgroundColors = !small;
 
-    [self.fWindow setContentBorderThickness:NSMinY(self.fTableView.enclosingScrollView.frame) forEdge:NSMinYEdge];
     self.fWindow.movableByWindowBackground = YES;
 
     self.fTotalTorrentsField.cell.backgroundStyle = NSBackgroundStyleRaised;
 
     self.fActionButton.toolTip = NSLocalizedString(@"Shortcuts for changing global settings.", "Main window -> 1st bottom left button (action) tooltip");
+    if (@available(macOS 26.0, *))
+    {
+        NSLayoutConstraint* constraint = [self.fActionButton.leadingAnchor constraintEqualToAnchor:self.fActionButton.superview.leadingAnchor
+                                                                                          constant:16.0];
+        constraint.priority = NSLayoutPriorityRequired;
+        constraint.active = YES;
+    }
+
     self.fSpeedLimitButton.toolTip = NSLocalizedString(
         @"Speed Limit overrides the total bandwidth limits with its own limits.",
         "Main window -> 2nd bottom left button (turtle) tooltip");
@@ -702,18 +710,6 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     //this must be called after showStatusBar:
     [self.fStatusBar updateWithDownload:0.0 upload:0.0];
 
-    //register for sleep notifications
-    IONotificationPortRef notify;
-    io_object_t iterator;
-    if ((self.fRootPort = IORegisterForSystemPower((__bridge void*)(self), &notify, sleepCallback, &iterator)))
-    {
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), IONotificationPortGetRunLoopSource(notify), kCFRunLoopCommonModes);
-    }
-    else
-    {
-        NSLog(@"Could not IORegisterForSystemPower");
-    }
-
     auto* const session = self.fLib;
 
     //load previous transfers
@@ -728,11 +724,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     tr_sessionGetAllTorrents(session, std::data(torrents), std::size(torrents));
     for (auto* tor : torrents)
     {
-        NSString* location;
-        if (tr_torrentGetDownloadDir(tor) != NULL)
-        {
-            location = @(tr_torrentGetDownloadDir(tor));
-        }
+        NSString* location = tr_strv_to_utf8_nsstring(tr_torrentGetDownloadDir(tor));
         Torrent* torrent = [[Torrent alloc] initWithTorrentStruct:tor location:location lib:self.fLib];
         [self.fTorrents addObject:torrent];
         self.fTorrentHashes[torrent.hashString] = torrent;
@@ -826,7 +818,6 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     [self updateMainWindow];
 
     //timer to update the interface every second
-    [self updateUI];
     self.fTimer = [NSTimer scheduledTimerWithTimeInterval:kUpdateUISeconds target:self selector:@selector(updateUI) userInfo:nil
                                                   repeats:YES];
     [NSRunLoop.currentRunLoop addTimer:self.fTimer forMode:NSModalPanelRunLoopMode];
@@ -889,8 +880,8 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
     NSApp.servicesProvider = self;
 
-    self.fNoNapActivity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
-                                                                       reason:@"No napping on the job!"];
+    [PowerManager.shared setDelegate:self];
+    [PowerManager.shared start];
 
     //register for dock icon drags (has to be in applicationDidFinishLaunching: to work)
     [[NSAppleEventManager sharedAppleEventManager] setEventHandler:self andSelector:@selector(handleOpenContentsEvent:replyEvent:)
@@ -1038,7 +1029,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 {
     self.fQuitting = YES;
 
-    [NSProcessInfo.processInfo endActivity:self.fNoNapActivity];
+    [PowerManager.shared stop];
 
     //stop the Bonjour service
     if (BonjourController.defaultControllerExists)
@@ -1393,7 +1384,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     tr_torrent* duplicateTorrent;
     if ((duplicateTorrent = tr_torrentFindFromMagnetLink(self.fLib, address.UTF8String)))
     {
-        NSString* name = @(tr_torrentName(duplicateTorrent));
+        NSString* name = tr_strv_to_utf8_nsstring(tr_torrentName(duplicateTorrent));
         [self duplicateOpenMagnetAlert:address transferName:name];
         return;
     }
@@ -2378,16 +2369,21 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 {
     CGFloat dlRate = 0.0, ulRate = 0.0;
     BOOL anyCompleted = NO;
+    BOOL anyActive = NO;
+
+    [Torrent updateTorrents:self.fTorrents];
+
     for (Torrent* torrent in self.fTorrents)
     {
-        [torrent update];
-
         //pull the upload and download speeds - most consistent by using current stats
         dlRate += torrent.downloadRate;
         ulRate += torrent.uploadRate;
 
         anyCompleted |= torrent.finishedSeeding;
+        anyActive |= torrent.active && !torrent.stalled && !torrent.error;
     }
+
+    PowerManager.shared.shouldPreventSleep = anyActive && [self.fDefaults boolForKey:@"SleepPrevent"];
 
     if (!NSApp.hidden)
     {
@@ -2529,7 +2525,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
         {
             //not found - must be filtering
             NSAssert([self.fDefaults boolForKey:@"FilterBar"], @"expected the filter to be enabled");
-            [self.fFilterBar reset:YES];
+            [self.fFilterBar reset];
 
             row = [self.fTableView rowForItem:torrent];
 
@@ -3821,8 +3817,9 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
             for (Torrent* torrent in self.fTorrents)
             {
                 torrent.queuePosition = i++;
-                [torrent update];
             }
+
+            [Torrent updateTorrents:self.fTorrents];
 
             //do the drag animation here so that the dragged torrents are the ones that are animated as moving, and not the torrents around them
             [self.fTableView beginUpdates];
@@ -4034,19 +4031,19 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
 - (void)toggleStatusBar:(id)sender
 {
-    BOOL const show = self.fStatusBar == nil;
+    BOOL const show = self.fStatusBar == nil || self.fStatusBar.isHidden;
     [self.fDefaults setBool:show forKey:@"StatusBar"];
     [self updateMainWindow];
 }
 
 - (void)toggleFilterBar:(id)sender
 {
-    BOOL const show = self.fFilterBar == nil;
+    BOOL const show = self.fFilterBar == nil || self.fFilterBar.isHidden;
 
     //disable filtering when hiding (have to do before updateMainWindow:)
     if (!show)
     {
-        [self.fFilterBar reset:NO];
+        [self.fFilterBar reset];
     }
 
     [self.fDefaults setBool:show forKey:@"FilterBar"];
@@ -4060,7 +4057,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
 - (void)focusFilterField
 {
-    if (!self.fFilterBar)
+    if (self.fFilterBar == nil || self.fFilterBar.isHidden)
     {
         [self toggleFilterBar:self];
     }
@@ -4561,7 +4558,8 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     //set filter item
     if ([ident isEqualToString:ToolbarItemIdentifierFilter])
     {
-        ((NSButton*)toolbarItem.view).state = self.fFilterBar != nil;
+        BOOL shown = !(self.fFilterBar == nil || self.fFilterBar.isHidden);
+        ((NSButton*)toolbarItem.view).state = shown ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
 
@@ -4695,20 +4693,22 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     }
 
     //enable toggle status bar
+    BOOL statusBarVisible = self.fStatusBar && !self.fStatusBar.isHidden;
     if (action == @selector(toggleStatusBar:))
     {
-        NSString* title = !self.fStatusBar ? NSLocalizedString(@"Show Status Bar", "View menu -> Status Bar") :
-                                             NSLocalizedString(@"Hide Status Bar", "View menu -> Status Bar");
+        NSString* title = !statusBarVisible ? NSLocalizedString(@"Show Status Bar", "View menu -> Status Bar") :
+                                              NSLocalizedString(@"Hide Status Bar", "View menu -> Status Bar");
         menuItem.title = title;
 
         return self.fWindow.visible;
     }
 
     //enable toggle filter bar
+    BOOL filterBarVisible = self.fFilterBar && !self.fFilterBar.isHidden;
     if (action == @selector(toggleFilterBar:))
     {
-        NSString* title = !self.fFilterBar ? NSLocalizedString(@"Show Filter Bar", "View menu -> Filter Bar") :
-                                             NSLocalizedString(@"Hide Filter Bar", "View menu -> Filter Bar");
+        NSString* title = !filterBarVisible ? NSLocalizedString(@"Show Filter Bar", "View menu -> Filter Bar") :
+                                              NSLocalizedString(@"Hide Filter Bar", "View menu -> Filter Bar");
         menuItem.title = title;
 
         return self.fWindow.visible;
@@ -4727,7 +4727,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     //enable prev/next filter button
     if (action == @selector(switchFilter:))
     {
-        return self.fWindow.visible && self.fFilterBar;
+        return self.fWindow.visible && filterBarVisible;
     }
 
     //enable reveal in finder
@@ -5007,57 +5007,32 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     return YES;
 }
 
-- (void)sleepCallback:(natural_t)messageType argument:(void*)messageArgument
+- (void)systemWillSleep
 {
-    switch (messageType)
+    //stop all transfers (since some are active) before going to sleep and remember to resume when we wake up
+    BOOL anyActive = NO;
+    for (Torrent* torrent in self.fTorrents)
     {
-    case kIOMessageSystemWillSleep:
+        if (torrent.active)
         {
-            //stop all transfers (since some are active) before going to sleep and remember to resume when we wake up
-            BOOL anyActive = NO;
-            for (Torrent* torrent in self.fTorrents)
-            {
-                if (torrent.active)
-                {
-                    anyActive = YES;
-                }
-                [torrent sleep]; //have to call on all, regardless if they are active
-            }
-
-            //if there are any running transfers, wait 15 seconds for them to stop
-            if (anyActive)
-            {
-                sleep(15);
-            }
-
-            IOAllowPowerChange(self.fRootPort, (long)messageArgument);
-            break;
+            anyActive = YES;
         }
+        [torrent sleep]; //have to call on all, regardless if they are active
+    }
 
-    case kIOMessageCanSystemSleep:
-        if ([self.fDefaults boolForKey:@"SleepPrevent"])
-        {
-            //prevent idle sleep unless no torrents are active
-            for (Torrent* torrent in self.fTorrents)
-            {
-                if (torrent.active && !torrent.stalled && !torrent.error)
-                {
-                    IOCancelPowerChange(self.fRootPort, (long)messageArgument);
-                    return;
-                }
-            }
-        }
+    //if there are any running transfers, wait 15 seconds for them to stop
+    if (anyActive)
+    {
+        sleep(15);
+    }
+}
 
-        IOAllowPowerChange(self.fRootPort, (long)messageArgument);
-        break;
-
-    case kIOMessageSystemHasPoweredOn:
-        //resume sleeping transfers after we wake up
-        for (Torrent* torrent in self.fTorrents)
-        {
-            [torrent wakeUp];
-        }
-        break;
+- (void)systemDidWakeUp
+{
+    //resume sleeping transfers after we wake up
+    for (Torrent* torrent in self.fTorrents)
+    {
+        [torrent wakeUp];
     }
 }
 
@@ -5110,59 +5085,41 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
 - (void)updateMainWindow
 {
-    NSArray* subViews = self.fStackView.arrangedSubviews;
-    NSUInteger idx = 0;
+    if (self.fStatusBar == nil)
+    {
+        self.fStatusBar = [[StatusBarController alloc] initWithLib:self.fLib];
+        self.fStatusBar.layoutAttribute = NSLayoutAttributeBottom;
+        self.fStatusBar.automaticallyAdjustsSize = NO;
 
-    //update layout
+        [self.fWindow addTitlebarAccessoryViewController:self.fStatusBar];
+    }
+
     if ([self.fDefaults boolForKey:@"StatusBar"])
     {
-        if (self.fStatusBar == nil)
-        {
-            self.fStatusBar = [[StatusBarController alloc] initWithLib:self.fLib];
-        }
-
-        [self.fStackView insertArrangedSubview:self.fStatusBar.view atIndex:idx];
-
-        NSDictionary* views = @{ @"fStatusBar" : self.fStatusBar.view };
-        [self.fStackView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[fStatusBar(==21)]" options:0
-                                                                                metrics:nil
-                                                                                  views:views]];
-        idx = 1;
+        self.fStatusBar.hidden = NO;
     }
     else
     {
-        if ([subViews containsObject:self.fStatusBar.view])
-        {
-            [self.fStackView removeView:self.fStatusBar.view];
-            self.fStatusBar = nil;
-        }
+        self.fStatusBar.hidden = YES;
+    }
+
+    if (self.fFilterBar == nil)
+    {
+        self.fFilterBar = [[FilterBarController alloc] init];
+        self.fFilterBar.layoutAttribute = NSLayoutAttributeBottom;
+        self.fFilterBar.automaticallyAdjustsSize = NO;
+
+        [self.fWindow addTitlebarAccessoryViewController:self.fFilterBar];
     }
 
     if ([self.fDefaults boolForKey:@"FilterBar"])
     {
-        if (self.fFilterBar == nil)
-        {
-            self.fFilterBar = [[FilterBarController alloc] init];
-        }
-
-        [self.fStackView insertArrangedSubview:self.fFilterBar.view atIndex:idx];
-
-        NSDictionary* views = @{ @"fFilterBar" : self.fFilterBar.view };
-        [self.fStackView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[fFilterBar(==23)]" options:0
-                                                                                metrics:nil
-                                                                                  views:views]];
-
+        self.fFilterBar.hidden = NO;
         [self focusFilterField];
     }
     else
     {
-        if ([subViews containsObject:self.fFilterBar.view])
-        {
-            [self.fStackView removeView:self.fFilterBar.view];
-            self.fFilterBar = nil;
-
-            [self.fWindow makeFirstResponder:self.fTableView];
-        }
+        self.fFilterBar.hidden = YES;
     }
 
     [self fullUpdateUI];
@@ -5177,40 +5134,47 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
         scrollView.hasVerticalScroller = NO;
 
-        [self removeStackViewHeightConstraints];
-
-        NSDictionary* views = @{ @"scrollView" : scrollView };
+        [self removeHeightConstraints];
 
         if (![self.fDefaults boolForKey:@"AutoSize"])
         {
             // Only set a minimum height constraint
             CGFloat height = self.minScrollViewHeightAllowed;
-            NSString* constraintsString = [NSString stringWithFormat:@"V:[scrollView(>=%f)]", height];
-            self.fStackViewHeightConstraints = [NSLayoutConstraint constraintsWithVisualFormat:constraintsString options:0
-                                                                                       metrics:nil
-                                                                                         views:views];
+            if (self.fMinHeightConstraint == nil)
+            {
+                self.fMinHeightConstraint = [scrollView.heightAnchor constraintGreaterThanOrEqualToConstant:height];
+            }
+            else
+            {
+                self.fMinHeightConstraint.constant = height;
+            }
+
+            self.fMinHeightConstraint.active = YES;
         }
         else
         {
             // Set a fixed height constraint
             CGFloat height = [self calculateScrollViewHeightWithDockAdjustment];
-            NSString* constraintsString = [NSString stringWithFormat:@"V:[scrollView(==%f)]", height];
-            self.fStackViewHeightConstraints = [NSLayoutConstraint constraintsWithVisualFormat:constraintsString options:0
-                                                                                       metrics:nil
-                                                                                         views:views];
+            if (self.fFixedHeightConstraint == nil)
+            {
+                self.fFixedHeightConstraint = [scrollView.heightAnchor constraintEqualToConstant:height];
+            }
+            else
+            {
+                self.fFixedHeightConstraint.constant = height;
+            }
 
             // Redraw table to avoid empty cells
             [self.fTableView reloadData];
-        }
 
-        // Add height constraint to fStackView
-        [self.fStackView addConstraints:self.fStackViewHeightConstraints];
+            self.fFixedHeightConstraint.active = YES;
+        }
 
         scrollView.hasVerticalScroller = YES;
     }
     else
     {
-        [self removeStackViewHeightConstraints];
+        [self removeHeightConstraints];
     }
 }
 
@@ -5238,7 +5202,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     }
     else
     {
-        [self removeStackViewHeightConstraints];
+        [self removeHeightConstraints];
     }
 }
 
@@ -5251,7 +5215,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
         //and we only need to "fix" the layout when showing the toolbar
         if (!self.fWindow.toolbar.isVisible)
         {
-            [self removeStackViewHeightConstraints];
+            [self removeHeightConstraints];
         }
 
         //this fixes a macOS bug where on toggling the toolbar item bezels will show
@@ -5272,11 +5236,15 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
     }
 }
 
-- (void)removeStackViewHeightConstraints
+- (void)removeHeightConstraints
 {
-    if (self.fStackViewHeightConstraints)
+    if (self.fFixedHeightConstraint != nil)
     {
-        [self.fStackView removeConstraints:self.fStackViewHeightConstraints];
+        self.fFixedHeightConstraint.active = NO;
+    }
+    if (self.fMinHeightConstraint != nil)
+    {
+        self.fMinHeightConstraint.active = NO;
     }
 }
 
@@ -5294,12 +5262,13 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 - (CGFloat)mainWindowComponentHeight
 {
     CGFloat height = kBottomBarHeight;
-    if (self.fStatusBar)
+
+    if (self.fStatusBar != nil && !self.fStatusBar.isHidden)
     {
         height += kStatusBarHeight;
     }
 
-    if (self.fFilterBar)
+    if (self.fFilterBar != nil && !self.fFilterBar.isHidden)
     {
         height += kFilterBarHeight;
     }
@@ -5360,7 +5329,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
 - (void)windowWillEnterFullScreen:(NSNotification*)notification
 {
-    [self removeStackViewHeightConstraints];
+    [self removeHeightConstraints];
 }
 
 - (void)windowDidExitFullScreen:(NSNotification*)notification
@@ -5496,11 +5465,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
 - (void)rpcAddTorrentStruct:(struct tr_torrent*)torrentStruct
 {
-    NSString* location = nil;
-    if (tr_torrentGetDownloadDir(torrentStruct) != NULL)
-    {
-        location = @(tr_torrentGetDownloadDir(torrentStruct));
-    }
+    NSString* location = tr_strv_to_utf8_nsstring(tr_torrentGetDownloadDir(torrentStruct));
 
     Torrent* torrent = [[Torrent alloc] initWithTorrentStruct:torrentStruct location:location lib:self.fLib];
 
@@ -5561,10 +5526,7 @@ void onTorrentCompletenessChanged(tr_torrent* tor, tr_completeness status, bool 
 
 - (void)rpcUpdateQueue
 {
-    for (Torrent* torrent in self.fTorrents)
-    {
-        [torrent update];
-    }
+    [Torrent updateTorrents:self.fTorrents];
 
     NSSortDescriptor* descriptor = [NSSortDescriptor sortDescriptorWithKey:@"queuePosition" ascending:YES];
     NSArray* descriptors = @[ descriptor ];

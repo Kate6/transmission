@@ -15,7 +15,7 @@ tr_allow_compile_if(
 
 target_compile_definitions(${TR_NAME}-daemon
     PRIVATE
-        $<$<BOOL:${WITH_SYSTEMD}>:USE_SYSTEMD>)
+        $<$<BOOL:${WITH_SYSTEMD}>:WITH_SYSTEMD>)
 
 tr_target_compile_definitions_for_headers(${TR_NAME}-daemon
     PRIVATE
@@ -33,8 +33,8 @@ target_include_directories(${TR_NAME}-daemon SYSTEM
 target_link_libraries(${TR_NAME}-daemon
     PRIVATE
         ${TR_NAME}
-        libevent::event
-        fmt::fmt-header-only
+        libevent::core
+        transmission::fmt-header-only
         $<$<BOOL:${WITH_SYSTEMD}>:${SYSTEMD_LIBRARIES}>)
 
 tr_win32_app_info(${TR_NAME}-daemon

@@ -35,6 +35,10 @@ extern NSString* const kTorrentDidChangeGroupNotification;
 - (void)getAmountFinished:(float*)tab size:(int)size;
 @property(nonatomic) NSIndexSet* previousFinishedPieces;
 
+// Updates one or more torrents by refreshing their libtransmission stats.
+// Prefer using this batch method when updating many torrents at once.
++ (void)updateTorrents:(NSArray<Torrent*>*)torrents;
+
 - (void)update;
 
 - (void)startTransferIgnoringQueue:(BOOL)ignoreQueue;
@@ -195,8 +199,8 @@ extern NSString* const kTorrentDidChangeGroupNotification;
 - (CGFloat)fileProgress:(FileListNode*)node;
 - (BOOL)canChangeDownloadCheckForFile:(NSUInteger)index;
 - (BOOL)canChangeDownloadCheckForFiles:(NSIndexSet*)indexSet;
-- (NSInteger)checkForFiles:(NSIndexSet*)indexSet;
-- (void)setFileCheckState:(NSInteger)state forIndexes:(NSIndexSet*)indexSet;
+- (NSControlStateValue)checkForFiles:(NSIndexSet*)indexSet;
+- (void)setFileCheckState:(NSControlStateValue)state forIndexes:(NSIndexSet*)indexSet;
 - (void)setFilePriority:(tr_priority_t)priority forIndexes:(NSIndexSet*)indexSet;
 - (BOOL)hasFilePriority:(tr_priority_t)priority forIndexes:(NSIndexSet*)indexSet;
 - (NSSet*)filePrioritiesForIndexes:(NSIndexSet*)indexSet;

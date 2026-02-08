@@ -12,6 +12,8 @@
 #include <string>
 #include <string_view>
 
+#include <gtest/gtest.h>
+
 #include <libtransmission/transmission.h>
 
 #include <libtransmission/crypto-utils.h>
@@ -21,12 +23,11 @@
 #include <libtransmission/variant.h>
 #include <libtransmission/version.h>
 
-#include "gtest/gtest.h"
 #include "test-fixtures.h"
 
 using namespace std::literals;
 
-namespace libtransmission::test
+namespace tr::test
 {
 
 TEST_F(SessionTest, propertiesApi)
@@ -48,14 +49,10 @@ TEST_F(SessionTest, propertiesApi)
         EXPECT_EQ(value, session->downloadDir());
         EXPECT_EQ(value, tr_sessionGetDownloadDir(session));
 
-        tr_sessionSetDownloadDir(session, std::string(value).c_str());
+        tr_sessionSetDownloadDir(session, value);
         EXPECT_EQ(value, session->downloadDir());
         EXPECT_EQ(value, tr_sessionGetDownloadDir(session));
     }
-
-    tr_sessionSetDownloadDir(session, nullptr);
-    EXPECT_EQ(""sv, session->downloadDir());
-    EXPECT_EQ(""sv, tr_sessionGetDownloadDir(session));
 
     // incomplete dir
 
@@ -65,14 +62,10 @@ TEST_F(SessionTest, propertiesApi)
         EXPECT_EQ(value, session->incompleteDir());
         EXPECT_EQ(value, tr_sessionGetIncompleteDir(session));
 
-        tr_sessionSetIncompleteDir(session, std::string(value).c_str());
+        tr_sessionSetIncompleteDir(session, value);
         EXPECT_EQ(value, session->incompleteDir());
         EXPECT_EQ(value, tr_sessionGetIncompleteDir(session));
     }
-
-    tr_sessionSetIncompleteDir(session, nullptr);
-    EXPECT_EQ(""sv, session->incompleteDir());
-    EXPECT_EQ(""sv, tr_sessionGetIncompleteDir(session));
 
     // script
 
@@ -84,14 +77,10 @@ TEST_F(SessionTest, propertiesApi)
             EXPECT_EQ(value, session->script(type));
             EXPECT_EQ(value, tr_sessionGetScript(session, type));
 
-            tr_sessionSetScript(session, type, std::string(value).c_str());
+            tr_sessionSetScript(session, type, value);
             EXPECT_EQ(value, session->script(type));
             EXPECT_EQ(value, tr_sessionGetScript(session, type));
         }
-
-        tr_sessionSetScript(session, type, nullptr);
-        EXPECT_EQ(""sv, session->script(type));
-        EXPECT_EQ(""sv, tr_sessionGetScript(session, type));
 
         for (auto const value : { true, false })
         {
@@ -126,31 +115,24 @@ TEST_F(SessionTest, propertiesApi)
         EXPECT_EQ(value, session->blocklistUrl());
         EXPECT_EQ(value, tr_blocklistGetURL(session));
 
-        tr_blocklistSetURL(session, std::string(value).c_str());
+        tr_blocklistSetURL(session, value);
         EXPECT_EQ(value, session->blocklistUrl());
         EXPECT_EQ(value, tr_blocklistGetURL(session));
     }
-
-    tr_blocklistSetURL(session, nullptr);
-    EXPECT_EQ(""sv, session->blocklistUrl());
-    EXPECT_EQ(""sv, tr_blocklistGetURL(session));
 
     // rpc username
 
     for (auto const& value : { "foo"sv, "bar"sv, ""sv })
     {
-        tr_sessionSetRPCUsername(session, std::string{ value }.c_str());
+        tr_sessionSetRPCUsername(session, value);
         EXPECT_EQ(value, tr_sessionGetRPCUsername(session));
     }
-
-    tr_sessionSetRPCUsername(session, nullptr);
-    EXPECT_EQ(""sv, tr_sessionGetRPCUsername(session));
 
     // rpc password (unsalted)
 
     {
         auto const value = "foo"sv;
-        tr_sessionSetRPCPassword(session, std::string{ value }.c_str());
+        tr_sessionSetRPCPassword(session, value);
         EXPECT_NE(value, tr_sessionGetRPCPassword(session));
         EXPECT_EQ('{', tr_sessionGetRPCPassword(session)[0]);
     }
@@ -160,7 +142,7 @@ TEST_F(SessionTest, propertiesApi)
     {
         auto const plaintext = "foo"sv;
         auto const salted = tr_ssha1(plaintext);
-        tr_sessionSetRPCPassword(session, salted.c_str());
+        tr_sessionSetRPCPassword(session, salted);
         EXPECT_EQ(salted, tr_sessionGetRPCPassword(session));
     }
 
@@ -313,14 +295,14 @@ TEST_F(SessionTest, honorsSettings)
     {
         settings_map->insert_or_assign(key, true);
     }
-    auto* session = tr_sessionInit(sandboxDir().data(), false, settings);
+    auto* session = tr_sessionInit(sandboxDir(), false, settings);
 
     // confirm that these settings were enabled
     EXPECT_TRUE(session->isPortRandom());
     EXPECT_TRUE(tr_sessionUsesAltSpeedTime(session));
     EXPECT_TRUE(tr_sessionIsRPCEnabled(session));
 
-    tr_sessionClose(session);
+    tr_sessionClose(session, 0.5);
 }
 
 TEST_F(SessionTest, savesSettings)
@@ -346,4 +328,33 @@ TEST_F(SessionTest, savesSettings)
     }
 }
 
-} // namespace libtransmission::test
+TEST_F(SessionTest, loadTorrentsThenMagnets)
+{
+    static auto constexpr TorrentFile = LIBTRANSMISSION_TEST_ASSETS_DIR "/archlinux-2025.05.01-x86_64.iso.torrent";
+    static auto constexpr MagnetFile = LIBTRANSMISSION_TEST_ASSETS_DIR "/archlinux-2025.05.01-x86_64.iso.magnet";
+
+    if (auto error = tr_error{};
+        !tr_sys_path_copy(
+            TorrentFile,
+            tr_pathbuf{ session_->torrentDir(), "/2e34989b1c60df821b2d046c884d8f4d1858b97a.torrent"sv },
+            &error) ||
+        !tr_sys_path_copy(
+            MagnetFile,
+            tr_pathbuf{ session_->torrentDir(), "/2e34989b1c60df821b2d046c884d8f4d1858b97a.magnet"sv },
+            &error))
+    {
+        GTEST_SKIP() << fmt::format("Failed to setup torrents dir: {} ({})", error.message(), error.code());
+    }
+
+    auto* const ctor = tr_ctorNew(session_);
+    ctor->set_paused(TR_FORCE, false);
+    EXPECT_EQ(tr_sessionLoadTorrents(session_, ctor), 1U);
+    tr_ctorFree(ctor);
+
+    auto* const tor = session_->torrents().get(1U);
+    ASSERT_NE(tor, nullptr);
+
+    EXPECT_TRUE(tor->has_metainfo());
+}
+
+} // namespace tr::test

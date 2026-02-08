@@ -38,6 +38,7 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <ranges>
 #include <stack>
 #include <string>
 #include <string_view>
@@ -669,7 +670,7 @@ std::string build_filename(tr_torrent const* tor, Gtk::TreeModel::iterator const
     }
 
     tokens.emplace_back(tr_torrentGetCurrentDir(tor));
-    std::reverse(tokens.begin(), tokens.end());
+    std::ranges::reverse(tokens);
     return Glib::build_filename(tokens);
 }
 
@@ -907,8 +908,8 @@ void FileList::Impl::cell_edited_callback(Glib::ustring const& path_string, Glib
     rename_data->path_string = path_string;
     tr_torrentRenamePath(
         tor,
-        oldpath.c_str(),
-        newname.c_str(),
+        oldpath.raw(),
+        newname.raw(),
         static_cast<tr_torrent_rename_done_func>(
             [](tr_torrent* /*tor*/, char const* /*oldpath*/, char const* /*newname*/, int error, gpointer data)
             {

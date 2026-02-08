@@ -7,6 +7,7 @@
 #include <array> // std::array
 #include <cctype>
 #include <cfloat> // DBL_DIG
+#include <charconv> // std::from_chars()
 #include <chrono>
 #include <cstdint> // SIZE_MAX
 #include <cstdlib> // getenv()
@@ -17,6 +18,8 @@
 #include <iterator> // for std::back_inserter
 #include <locale>
 #include <memory>
+#include <ranges>
+#include <mutex>
 #include <optional>
 #include <stdexcept> // std::runtime_error
 #include <string>
@@ -35,7 +38,6 @@
 #include <sys/stat.h> /* umask() */
 #endif
 
-#define UTF_CPP_CPLUSPLUS 201703L
 #include <utf8.h>
 
 #include <curl/curl.h>
@@ -52,19 +54,20 @@
 #include "libtransmission/file.h"
 #include "libtransmission/log.h"
 #include "libtransmission/mime-types.h"
+#include "libtransmission/serializer.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/tr-strbuf.h"
 #include "libtransmission/utils.h"
 #include "libtransmission/values.h"
 
 using namespace std::literals;
-using namespace libtransmission::Values;
+using namespace tr::Values;
 
-time_t libtransmission::detail::tr_time::current_time = {};
+time_t tr::detail::tr_time::current_time = {};
 
 // ---
 
-namespace libtransmission::Values
+namespace tr::Values
 {
 
 // default values; can be overridden by client apps
@@ -72,7 +75,7 @@ Config::Units<MemoryUnits> Config::memory{ Config::Base::Kibi, "B"sv, "KiB"sv, "
 Config::Units<SpeedUnits> Config::speed{ Config::Base::Kilo, "B/s"sv, "kB/s"sv, "MB/s"sv, "GB/s"sv, "TB/s"sv };
 Config::Units<StorageUnits> Config::storage{ Config::Base::Kilo, "B"sv, "kB"sv, "MB"sv, "GB"sv, "TB"sv };
 
-} // namespace libtransmission::Values
+} // namespace tr::Values
 
 // ---
 
@@ -228,29 +231,12 @@ bool tr_file_save(std::string_view filename, std::string_view contents, tr_error
 
 // ---
 
-size_t tr_strv_to_buf(std::string_view src, char* buf, size_t buflen)
-{
-    size_t const len = std::size(src);
-
-    if (buflen >= len)
-    {
-        auto const out = std::copy(std::begin(src), std::end(src), buf);
-
-        if (buflen > len)
-        {
-            *out = '\0';
-        }
-    }
-
-    return len;
-}
-
-/* User-level routine. returns whether or not 'text' and 'p' matched */
-bool tr_wildmat(std::string_view text, std::string_view pattern)
+/* User-level routine. returns whether or not 'text' and 'pattern' matched */
+bool tr_wildmat(char const* text, char const* pattern)
 {
     // TODO(ckerr): replace wildmat with base/strings/pattern.cc
     // wildmat wants these to be zero-terminated.
-    return pattern == "*"sv || DoMatch(std::string{ text }.c_str(), std::string{ pattern }.c_str()) > 0;
+    return (pattern[0] == '*' && pattern[1] == '\0') || DoMatch(text, pattern) > 0;
 }
 
 char const* tr_strerror(int errnum)
@@ -272,11 +258,11 @@ std::string_view tr_strv_strip(std::string_view str)
         return isspace(static_cast<unsigned char>(ch));
     };
 
-    auto const it = std::find_if_not(std::begin(str), std::end(str), Test);
-    str.remove_prefix(std::distance(std::begin(str), it));
+    auto const it = std::ranges::find_if_not(str, Test);
+    str.remove_prefix(std::ranges::distance(std::ranges::begin(str), it));
 
-    auto const rit = std::find_if_not(std::rbegin(str), std::rend(str), Test);
-    str.remove_suffix(std::distance(std::rbegin(str), rit));
+    auto const rit = std::ranges::find_if_not(std::ranges::rbegin(str), std::ranges::rend(str), Test);
+    str.remove_suffix(std::ranges::distance(std::ranges::rbegin(str), rit));
 
     return str;
 }
@@ -309,7 +295,7 @@ double tr_getRatio(uint64_t numerator, uint64_t denominator)
 
 #if !(defined(__APPLE__) && defined(__clang__))
 
-std::string tr_strv_convert_utf8(std::string_view sv)
+std::string tr_strv_to_utf8_string(std::string_view sv)
 {
     return tr_strv_replace_invalid(sv);
 }
@@ -561,11 +547,11 @@ std::string tr_strpercent(double x)
     return fmt::format("{:.0Lf}", x);
 }
 
-std::string tr_strratio(double ratio, std::string_view infinity)
+std::string tr_strratio(double ratio, std::string_view const none, std::string_view const infinity)
 {
     if ((int)ratio == TR_RATIO_NA)
     {
-        return _("None");
+        return std::string{ none };
     }
 
     if ((int)ratio == TR_RATIO_INF)
@@ -578,11 +564,8 @@ std::string tr_strratio(double ratio, std::string_view infinity)
 
 // ---
 
-bool tr_file_move(std::string_view oldpath_in, std::string_view newpath_in, bool allow_copy, tr_error* error)
+bool tr_file_move(std::string_view oldpath, std::string_view newpath, bool allow_copy, tr_error* error)
 {
-    auto const oldpath = tr_pathbuf{ oldpath_in };
-    auto const newpath = tr_pathbuf{ newpath_in };
-
     auto local_error = tr_error{};
     if (error == nullptr)
     {
@@ -603,22 +586,27 @@ bool tr_file_move(std::string_view oldpath_in, std::string_view newpath_in, bool
     }
 
     // ensure the target directory exists
-    auto newdir = tr_pathbuf{ newpath };
-    newdir.popdir();
-    if (!tr_sys_dir_create(newdir, TR_SYS_DIR_CREATE_PARENTS, 0777, error))
+    if (!tr_sys_dir_create(tr_sys_path_dirname(newpath), TR_SYS_DIR_CREATE_PARENTS, 0777, error))
     {
         error->prefix_message("Unable to create directory for new file: ");
         return false;
     }
 
-    /* they might be on the same filesystem... */
-    if (tr_sys_path_rename(oldpath, newpath, error))
+    if (allow_copy)
     {
-        return true;
+        // they might be on the same filesystem...
+        if (tr_sys_path_rename(oldpath, newpath))
+        {
+            return true;
+        }
     }
-
-    if (!allow_copy)
+    else
     {
+        // do the actual moving
+        if (tr_sys_path_rename(oldpath, newpath, error))
+        {
+            return true;
+        }
         error->prefix_message("Unable to move file: ");
         return false;
     }
@@ -687,7 +675,7 @@ uint64_t tr_ntohll(uint64_t netlonglong)
 
 // --- ENVIRONMENT
 
-bool tr_env_key_exists(char const* key)
+bool tr_env_key_exists(char const* key) noexcept
 {
     TR_ASSERT(key != nullptr);
 
@@ -779,7 +767,15 @@ std::unique_ptr<tr_net_init_mgr> tr_net_init_mgr::instance;
 
 void tr_lib_init()
 {
-    tr_net_init_impl::tr_net_init_mgr::create();
+    static auto once = std::once_flag{};
+    std::call_once(
+        once,
+        []
+        {
+            tr_net_init_impl::tr_net_init_mgr::create();
+
+            tr::serializer::Converters::ensure_default_converters();
+        });
 }
 
 // --- mime-type
@@ -808,51 +804,15 @@ std::string_view tr_get_mime_type_for_filename(std::string_view filename)
     return Fallback;
 }
 
-// --- parseNum()
+// --- tr_num_parse()
 
-#if defined(__GNUC__) && !__has_include(<charconv>)
-
-#include <iomanip> // std::setbase
-#include <sstream>
-
-template<typename T, std::enable_if_t<std::is_integral_v<T>, bool> = true>
+template<typename T>
 [[nodiscard]] std::optional<T> tr_num_parse(std::string_view str, std::string_view* remainder, int base)
-{
-    auto val = T{};
-    auto const tmpstr = std::string(std::data(str), std::min(std::size(str), size_t{ 64 }));
-    auto sstream = std::stringstream{ tmpstr };
-    auto const oldpos = sstream.tellg();
-    /* The base parameter only works for bases 8, 10 and 16.
-       All other bases will be converted to 0 which activates the
-       prefix based parsing and therefore decimal in our usual cases.
-       This differs from the from_chars solution below. */
-    sstream >> std::setbase(base) >> val;
-    auto const newpos = sstream.tellg();
-    if ((newpos == oldpos) || (sstream.fail() && !sstream.eof()))
-    {
-        return std::nullopt;
-    }
-    if (remainder != nullptr)
-    {
-        *remainder = str;
-        remainder->remove_prefix(sstream.eof() ? std::size(str) : newpos - oldpos);
-    }
-    return val;
-}
-
-#else // #if defined(__GNUC__) && !__has_include(<charconv>)
-
-#include <charconv> // std::from_chars()
-
-template<typename T, std::enable_if_t<std::is_integral_v<T>, bool>>
-[[nodiscard]] std::optional<T> tr_num_parse(std::string_view str, std::string_view* remainder, int base)
+    requires std::is_integral_v<T>
 {
     auto val = T{};
     auto const* const begin_ch = std::data(str);
     auto const* const end_ch = begin_ch + std::size(str);
-    /* The base parameter works for any base from 2 to 36 (inclusive).
-       This is different from the behaviour of the stringstream
-       based solution above. */
     auto const result = std::from_chars(begin_ch, end_ch, val, base);
     if (result.ec != std::errc{})
     {
@@ -866,8 +826,6 @@ template<typename T, std::enable_if_t<std::is_integral_v<T>, bool>>
     return val;
 }
 
-#endif // #if defined(__GNUC__) && !__has_include(<charconv>)
-
 template std::optional<long long> tr_num_parse(std::string_view str, std::string_view* remainder, int base);
 template std::optional<long> tr_num_parse(std::string_view str, std::string_view* remainder, int base);
 template std::optional<int> tr_num_parse(std::string_view str, std::string_view* remainder, int base);
@@ -879,8 +837,9 @@ template std::optional<unsigned int> tr_num_parse(std::string_view str, std::str
 template std::optional<unsigned short> tr_num_parse(std::string_view str, std::string_view* remainder, int base);
 template std::optional<unsigned char> tr_num_parse(std::string_view str, std::string_view* remainder, int base);
 
-template<typename T, std::enable_if_t<std::is_floating_point_v<T>, bool>>
+template<typename T>
 [[nodiscard]] std::optional<T> tr_num_parse(std::string_view str, std::string_view* remainder)
+    requires std::is_floating_point_v<T>
 {
     auto const* const begin_ch = std::data(str);
     auto const* const end_ch = begin_ch + std::size(str);

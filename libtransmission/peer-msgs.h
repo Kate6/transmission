@@ -38,7 +38,7 @@ public:
     tr_peerMsgs(
         tr_torrent const& tor,
         std::shared_ptr<tr_peer_info> peer_info_in,
-        tr_interned_string user_agent,
+        tr_peer_id_t peer_id,
         bool connection_is_encrypted,
         bool connection_is_incoming,
         bool connection_is_utp);
@@ -95,9 +95,14 @@ public:
         return user_agent_;
     }
 
+    [[nodiscard]] constexpr auto const& peer_id() const noexcept
+    {
+        return peer_id_;
+    }
+
     [[nodiscard]] constexpr auto is_active(tr_direction direction) const noexcept
     {
-        return is_active_[direction];
+        return is_active_[static_cast<uint8_t>(direction)];
     }
 
     [[nodiscard]] constexpr auto is_disconnecting() const noexcept
@@ -121,11 +126,11 @@ public:
 
     virtual void on_piece_completed(tr_piece_index_t) = 0;
 
-    static tr_peerMsgs* create(
+    static std::shared_ptr<tr_peerMsgs> create(
         tr_torrent& torrent,
         std::shared_ptr<tr_peer_info> peer_info,
         std::shared_ptr<tr_peerIo> io,
-        tr_interned_string user_agent,
+        tr_peer_id_t peer_id,
         tr_peer_callback_bt callback,
         void* callback_data);
 
@@ -152,12 +157,17 @@ protected:
 
     constexpr void set_active(tr_direction direction, bool active) noexcept
     {
-        is_active_[direction] = active;
+        is_active_[static_cast<uint8_t>(direction)] = active;
     }
 
     constexpr void set_user_agent(tr_interned_string val) noexcept
     {
         user_agent_ = val;
+    }
+
+    constexpr void set_peer_id(tr_peer_id_t val) noexcept
+    {
+        peer_id_ = val;
     }
 
 public:
@@ -169,6 +179,8 @@ private:
     // What software the peer is running.
     // Derived from the `v` string in LTEP's handshake dictionary, when available.
     tr_interned_string user_agent_;
+
+    tr_peer_id_t peer_id_;
 
     bool const connection_is_encrypted_;
     bool const connection_is_incoming_;

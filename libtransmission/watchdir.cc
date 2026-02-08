@@ -21,7 +21,7 @@
 
 using namespace std::literals;
 
-namespace libtransmission
+namespace tr
 {
 namespace
 {
@@ -123,4 +123,4 @@ void BaseWatchdir::scan()
 }
 
 } // namespace impl
-} // namespace libtransmission
+} // namespace tr
