@@ -134,6 +134,24 @@ tr_variant from_double(double const& val)
 
 // ---
 
+bool to_int(tr_variant const& src, int* tgt)
+{
+    if (auto const val = src.value_if<int64_t>())
+    {
+        *tgt = static_cast<int>(*val);
+        return true;
+    }
+
+    return false;
+}
+
+tr_variant from_int(int const& val)
+{
+    return int64_t{ val };
+}
+
+// ---
+
 bool to_int64(tr_variant const& src, int64_t* tgt)
 {
     if (auto const val = src.value_if<int64_t>())
@@ -476,6 +494,7 @@ void Converters::ensure_default_converters()
             Converters::add(to_diffserv_t, from_diffserv_t);
             Converters::add(to_double, from_double);
             Converters::add(to_encryption_mode, from_encryption_mode);
+            Converters::add(to_int, from_int);
             Converters::add(to_int64, from_int64);
             Converters::add(to_log_level, from_log_level);
             Converters::add(to_mode_t, from_mode_t);
