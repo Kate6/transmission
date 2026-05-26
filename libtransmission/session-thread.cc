@@ -23,6 +23,7 @@
 #include <event2/thread.h>
 
 #include "libtransmission/session-thread.h"
+#include "libtransmission/log.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/utils-ev.h"
 
@@ -166,6 +167,24 @@ public:
 
         // wait for the session thread's main loop to start
         is_looping_cv_.wait(lock, [this]() { return is_looping_.load(); });
+
+        // set up a 5-minute timer that prunes stale log-suppress entries
+        prune_timer_.reset(tr::evhelpers::event_new_pri2(
+            event_base(),
+            -1,
+            0,
+            [](evutil_socket_t, short, void* arg)
+            {
+                auto* const self = static_cast<tr_session_thread_impl*>(arg);
+                tr_logPruneCounts();
+                struct timeval tv = { 300, 0 };
+                event_add(self->prune_timer_.get(), &tv);
+            },
+            this));
+        {
+            struct timeval tv = { 300, 0 };
+            event_add(prune_timer_.get(), &tv);
+        }
     }
 
     tr_session_thread_impl(tr_session_thread_impl&&) = delete;
@@ -285,6 +304,8 @@ private:
     tr::evhelpers::event_unique_ptr const work_queue_event_{
         tr::evhelpers::event_new_pri2(evbase_.get(), -1, 0, on_work_available_static, this)
     };
+
+    tr::evhelpers::event_unique_ptr prune_timer_;
 
     work_queue_t work_queue_;
     std::mutex work_queue_mutex_;

@@ -113,3 +113,7 @@ void tr_logAddMessage(
 
 std::string_view tr_logGetTimeStr(std::chrono::system_clock::time_point now, char* buf, size_t buflen);
 std::string_view tr_logGetTimeStr(char* buf, size_t buflen);
+
+// Periodic cleanup of the per‑location log‑suppress counters.
+// Removes entries that haven't been seen since the last cleanup.
+void tr_logPruneCounts();

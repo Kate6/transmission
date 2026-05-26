@@ -63,6 +63,32 @@ public:
 
 auto log_state = tr_log_state{};
 
+// Log suppression: per‑location state (count + "seen this period" flag).
+// Allocated once at startup; pruned every 5 minutes by prune_log_counts().
+struct LogInfo
+{
+    size_t count{ 0 };
+    bool seen{ true };
+};
+
+static auto* const counts = new small::map<std::pair<std::string_view, long>, LogInfo>{};
+
+// Remove stale entries that weren't touched since the last pruning run,
+// and reset the "seen" flag on all survivors.
+static void prune_log_counts()
+{
+    for (auto it = counts->begin(); it != counts->end();)
+    {
+        if (!it->second.seen)
+            it = counts->erase(it);
+        else
+        {
+            it->second.seen = false;
+            ++it;
+        }
+    }
+}
+
 // ---
 
 void logAddImpl(
@@ -198,6 +224,11 @@ void tr_logFreeQueue(tr_log_message* freeme)
     }
 }
 
+void tr_logPruneCounts()
+{
+    prune_log_counts();
+}
+
 // ---
 
 std::string_view tr_logGetTimeStr(std::chrono::system_clock::time_point const now, char* const buf, size_t const buflen)
@@ -271,12 +302,12 @@ void tr_logAddMessage(char const* file, long line, tr_log_level level, std::stri
     if (level == TR_LOG_CRITICAL || level == TR_LOG_ERROR || level == TR_LOG_WARN)
     {
         static auto constexpr MaxRepeat = size_t{ 30 };
-        static auto* const counts = new small::map<std::pair<std::string_view, long>, size_t>{};
 
-        auto& count = (*counts)[std::make_pair(filename, line)];
-        ++count;
-        last_one = count == MaxRepeat;
-        if (count > MaxRepeat)
+        auto& info = (*counts)[std::make_pair(filename, line)];
+        info.seen = true;
+        ++info.count;
+        last_one = info.count == MaxRepeat;
+        if (info.count > MaxRepeat)
         {
             errno = err;
             return;
