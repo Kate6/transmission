@@ -457,6 +457,8 @@ int tr_main(int argc, char* argv[])
         tr_torrentVerify(tor);
     }
 
+    auto loop_count = 0U;
+
     for (;;)
     {
         std::this_thread::sleep_for(200ms);
@@ -483,40 +485,73 @@ int tr_main(int argc, char* argv[])
             }
         }
 
+        ++loop_count;
+        fprintf(stderr, "[D %u] before tr_torrentStat\n", loop_count);
+
         auto const st = tr_torrentStat(tor);
+
+        fprintf(
+            stderr,
+            "[D %u] after tr_torrentStat act=%d stalled=%d err=%d\n",
+            loop_count,
+            static_cast<int>(st.activity),
+            static_cast<int>(st.is_stalled),
+            static_cast<int>(st.error));
+
         if (st.activity == TR_STATUS_STOPPED)
         {
+            fprintf(stderr, "[D %u] TR_STATUS_STOPPED -> break\n", loop_count);
             break;
         }
 
         auto const status_str = getStatusStr(st);
         printf("\r%-*s", LineWidth, status_str.c_str());
+        fflush(stdout);
 
         bool ratio_limit_enabled = false;
         double ratio_limit = 0.0;
-        if (tr_variantDictFindBool(&settings, TR_KEY_ratio_limit_enabled, &ratio_limit_enabled) && ratio_limit_enabled &&
-            tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit) && ratio_limit <= 0.0 &&
-            st.activity == TR_STATUS_SEED)
+        auto const found_enabled = tr_variantDictFindBool(&settings, TR_KEY_ratio_limit_enabled, &ratio_limit_enabled);
+        auto const found_limit = tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit);
+        auto const ratio_seed = st.activity == TR_STATUS_SEED;
+        fprintf(
+            stderr,
+            "[D %u] ratio_check: found_en=%d enabled=%d found_lim=%d lim=%.2f seed=%d\n",
+            loop_count,
+            static_cast<int>(found_enabled),
+            static_cast<int>(ratio_limit_enabled),
+            static_cast<int>(found_limit),
+            ratio_limit,
+            static_cast<int>(ratio_seed));
+
+        if (found_enabled && ratio_limit_enabled && found_limit && ratio_limit <= 0.0 && ratio_seed)
         {
+            fprintf(stderr, "[D %u] -S exit -> break\n", loop_count);
             break;
         }
 
         if (st.is_stalled)
         {
+            fprintf(stderr, "[D %u] stalled -> exit\n", loop_count);
             fprintf(stderr, "Torrent `%s' has stalled\n", torrentPath);
+            fprintf(stderr, "[D] calling tr_sessionClose (stalled)...\n");
             tr_sessionClose(h);
+            fprintf(stderr, "[D] session closed (stalled), exiting\n");
             return EXIT_FAILURE;
         }
 
         if (st.error != tr_stat::Error::Ok)
         {
-            fmt::print(stderr, "\n{:s}: {:s}\n", getErrorMessagePrefix(st.error), st.error_string);
+            fprintf(stderr, "[D %u] error: ", loop_count);
+            fmt::print(stderr, "{:s}: {:s}\n", getErrorMessagePrefix(st.error), st.error_string);
         }
     }
 
+    fprintf(stderr, "[D] exited main loop, saving settings...\n");
     tr_sessionSaveSettings(h, config_dir, settings);
 
     printf("\n");
+    fprintf(stderr, "[D] closing session...\n");
     tr_sessionClose(h);
+    fprintf(stderr, "[D] session closed, exiting\n");
     return EXIT_SUCCESS;
 }
