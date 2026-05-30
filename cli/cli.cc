@@ -308,6 +308,7 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
             break;
 
         case 's':
+            tr_variantDictAddBool(d, TR_KEY_queue_stalled_enabled, true);
             tr_variantDictAddInt(d, TR_KEY_queue_stalled_minutes, atoi(my_optarg));
             break;
 
@@ -361,6 +362,8 @@ void sigHandler(int signal)
     case tr_stat::Error::Ok:
         return ""sv;
     }
+
+    return ""sv;
 }
 } // namespace
 
@@ -492,7 +495,7 @@ int tr_main(int argc, char* argv[])
         bool ratio_limit_enabled = false;
         double ratio_limit = 0.0;
         if (tr_variantDictFindBool(&settings, TR_KEY_ratio_limit_enabled, &ratio_limit_enabled) && ratio_limit_enabled &&
-            tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit) && ratio_limit == 0.0 &&
+            tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit) && ratio_limit <= 0.0 &&
             st.activity == TR_STATUS_SEED)
         {
             break;
