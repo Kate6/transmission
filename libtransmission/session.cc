@@ -1655,8 +1655,20 @@ void tr_sessionClose(tr_session* session, double const timeout_secs)
         std::chrono::milliseconds{ static_cast<int64_t>(timeout_secs * 1000.0) };
     session->run_in_session_thread([&closed_promise, deadline, session]()
                                    { session->closeImplPart1(&closed_promise, deadline); });
-    closed_future.wait();
 
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
+    if (closed_future.wait_for(std::chrono::milliseconds{ static_cast<int64_t>(timeout_secs * 2000.0) }) ==
+        std::future_status::ready)
+    {
+        delete session;
+        return;
+    }
+
+    // Fallback: if the session thread is unresponsive, force-destroy the session.
+    // This is a last resort — log and proceed with best-effort cleanup.
+    tr_logAddWarn(
+        fmt::format("Session shutdown timed out after {} seconds, forcing close", static_cast<int>(timeout_secs * 2.0)));
+    // session_thread_ destructor will break the event loop and join the thread.
     delete session;
 }
 
