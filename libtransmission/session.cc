@@ -1658,19 +1658,11 @@ void tr_sessionClose(tr_session* session, double const timeout_secs)
                                    { session->closeImplPart1(&closed_promise, deadline); });
 
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
-    if (closed_future.wait_for(std::chrono::milliseconds{ static_cast<int64_t>(timeout_secs * 2000.0) }) ==
-        std::future_status::ready)
-    {
-        delete session;
-        return;
-    }
+    (void)closed_future.wait_for(std::chrono::milliseconds{ static_cast<int64_t>(timeout_secs * 2000.0) });
 
-    // Fallback: if the session thread is unresponsive, force-destroy the session.
-    // This is a last resort — log and proceed with best-effort cleanup.
-    tr_logAddWarn(
-        fmt::format("Session shutdown timed out after {} seconds, forcing close", static_cast<int>(timeout_secs * 2.0)));
-    // Leak the session intentionally: deleting it would join the session thread,
-    // which could hang if a callback is stuck. The OS cleans up on process exit.
+    // Either way, we must not `delete session` here — deleting it would join the
+    // session thread (via ~tr_session_thread_impl), which hangs if a callback is
+    // stuck in the event loop. Instead we let the OS reclaim everything on exit.
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     std::_Exit(EXIT_SUCCESS);
 }
