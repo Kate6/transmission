@@ -1726,6 +1726,7 @@ ReadResult tr_peerMsgsImpl::read_piece_data(MessageReader& payload)
             block_loc.piece == block_last_loc.piece || !tor_.piece_is_wanted(block_last_loc.piece))
         {
             logwarn(this, fmt::format("got unwanted block {:d} ({:d}:{:d}->{:d})", block, piece, offset, len));
+            tor_.set_date_active(tr_time());
             return { ReadState::Err, len };
         }
     }
