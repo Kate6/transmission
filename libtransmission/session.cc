@@ -9,6 +9,7 @@
 #include <csignal>
 #include <cstddef> // size_t
 #include <cstdint>
+#include <cstdlib> // std::_Exit, EXIT_SUCCESS
 #include <ctime>
 #include <future>
 #include <iterator> // for std::back_inserter
@@ -1668,8 +1669,10 @@ void tr_sessionClose(tr_session* session, double const timeout_secs)
     // This is a last resort — log and proceed with best-effort cleanup.
     tr_logAddWarn(
         fmt::format("Session shutdown timed out after {} seconds, forcing close", static_cast<int>(timeout_secs * 2.0)));
-    // session_thread_ destructor will break the event loop and join the thread.
-    delete session;
+    // Leak the session intentionally: deleting it would join the session thread,
+    // which could hang if a callback is stuck. The OS cleans up on process exit.
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
+    std::_Exit(EXIT_SUCCESS);
 }
 
 namespace
