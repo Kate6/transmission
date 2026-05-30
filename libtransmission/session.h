@@ -1258,8 +1258,8 @@ private:
     void createNetlinkSocket();
     void cleanupNetlinkSocket();
     void pauseAllTorrents(int);
-    int nl_sock;
-    struct event* nl_event;
+    int nl_sock = TR_BAD_SOCKET;
+    struct event* nl_event = nullptr;
 
     friend class tr::test::SessionTest;
 
