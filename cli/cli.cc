@@ -494,10 +494,11 @@ int tr_main(int argc, char* argv[])
         }
 
         ++loop_count;
-        fprintf(stderr, "[D %u] before tr_torrentStat\n", loop_count);
+        //fprintf(stderr, "[D %u] before tr_torrentStat\n", loop_count);
 
         auto const st = tr_torrentStat(tor);
 
+        /*
         fprintf(
             stderr,
             "[D %u] after tr_torrentStat act=%d stalled=%d err=%d\n",
@@ -505,6 +506,7 @@ int tr_main(int argc, char* argv[])
             static_cast<int>(st.activity),
             static_cast<int>(st.is_stalled),
             static_cast<int>(st.error));
+            */
 
         if (st.activity == TR_STATUS_STOPPED)
         {
@@ -521,6 +523,7 @@ int tr_main(int argc, char* argv[])
         auto const found_enabled = tr_variantDictFindBool(&settings, TR_KEY_ratio_limit_enabled, &ratio_limit_enabled);
         auto const found_limit = tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit);
         auto const ratio_seed = st.activity == TR_STATUS_SEED;
+        /*
         fprintf(
             stderr,
             "[D %u] ratio_check: found_en=%d enabled=%d found_lim=%d lim=%.2f seed=%d\n",
@@ -530,6 +533,7 @@ int tr_main(int argc, char* argv[])
             static_cast<int>(found_limit),
             ratio_limit,
             static_cast<int>(ratio_seed));
+            */
 
         if (found_enabled && ratio_limit_enabled && found_limit && ratio_limit <= 0.0 && ratio_seed)
         {
