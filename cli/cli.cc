@@ -143,26 +143,34 @@ void onTorrentFileDownloaded(tr_web::FetchResponse const& response)
 
     if (st.activity == TR_STATUS_DOWNLOAD)
     {
+        auto dl_buf = std::array<char, 64>{};
+        auto ul_buf = std::array<char, 64>{};
+        auto const dl_speed = st.piece_download_speed.to_string(std::data(dl_buf), std::size(dl_buf));
+        auto const ul_speed = st.piece_upload_speed.to_string(std::data(ul_buf), std::size(ul_buf));
+        auto const ratio_str = tr_strlratio(st.upload_ratio);
         return fmt::format(
             "Progress: {:.1f}%, dl from {:d} of {:d} peers ({:s}), ul to {:d} "
             "({:s}) [{:s}]",
             tr_truncd(100 * st.percent_done, 1),
             st.peers_sending_to_us,
             st.peers_connected,
-            st.piece_download_speed.to_string(),
+            dl_speed,
             st.peers_getting_from_us,
-            st.piece_upload_speed.to_string(),
-            tr_strlratio(st.upload_ratio));
+            ul_speed,
+            ratio_str);
     }
 
     if (st.activity == TR_STATUS_SEED)
     {
+        auto ul_buf = std::array<char, 64>{};
+        auto const ul_speed = st.piece_upload_speed.to_string(std::data(ul_buf), std::size(ul_buf));
+        auto const ratio_str = tr_strlratio(st.upload_ratio);
         return fmt::format(
             "Seeding, uploading to {:d} of {:d} peer(s), {:s} [{:s}]",
             st.peers_getting_from_us,
             st.peers_connected,
-            st.piece_upload_speed.to_string(),
-            tr_strlratio(st.upload_ratio));
+            ul_speed,
+            ratio_str);
     }
 
     return {};
