@@ -772,6 +772,18 @@
                                 </layout>
                               </object>
                             </child>
+                            <child>
+                              <object class="GtkCheckButton" id="ban_choking_peers_check">
+                                <property name="label" translatable="yes">Drop and temp-ban peers that _choke us</property>
+                                <property name="focusable">1</property>
+                                <property name="valign">center</property>
+                                <property name="use-underline">1</property>
+                                <layout>
+                                  <property name="column">0</property>
+                                  <property name="row">2</property>
+                                </layout>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>

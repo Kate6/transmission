@@ -676,6 +676,8 @@ PrivacyPage::PrivacyPage(
 
     init_check_button("blocklist_autoupdate_check", TR_KEY_blocklist_updates_enabled);
 
+    init_check_button("ban_choking_peers_check", TR_KEY_ban_choking_peers);
+
     updateBlocklistTag_ = core_->signal_blocklist_updated().connect(sigc::mem_fun(*this, &PrivacyPage::onBlocklistUpdated));
 }
 
