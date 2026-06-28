@@ -18,6 +18,7 @@
 #include <cstdint> // uintX_t
 #include <ctime> // time_t
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -427,6 +428,7 @@ public:
         // NB: When adding a field here, you must also add it to
         // `Fields` if you want it to be in session-settings.json
         bool announce_ip_enabled = false;
+        bool ban_choking_peers = false;
         bool blocklist_enabled = false;
         bool dht_enabled = true;
         bool download_queue_enabled = true;
@@ -499,6 +501,7 @@ public:
         static constexpr auto Fields = std::tuple{
             Field<&Settings::announce_ip>{ TR_KEY_announce_ip },
             Field<&Settings::announce_ip_enabled>{ TR_KEY_announce_ip_enabled },
+            Field<&Settings::ban_choking_peers>{ TR_KEY_ban_choking_peers },
             Field<&Settings::bind_address_ipv4>{ TR_KEY_bind_address_ipv4 },
             Field<&Settings::bind_address_ipv6>{ TR_KEY_bind_address_ipv6 },
             Field<&Settings::bind_interface>{ TR_KEY_bind_interface },
@@ -728,6 +731,14 @@ public:
     {
         return settings().blocklist_enabled;
     }
+
+    [[nodiscard]] auto banChokingPeers() const noexcept
+    {
+        return settings().ban_choking_peers;
+    }
+
+    // peer address → unban time for temp-banned peers
+    std::map<tr_address, time_t> choked_bans_;
 
     [[nodiscard]] constexpr auto const& blocklistUrl() const noexcept
     {

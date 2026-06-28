@@ -74,6 +74,7 @@ enum // NOLINT(performance-enum-size)
     TR_KEY_anti_brute_force_threshold, /* rpc, settings */
     TR_KEY_arguments, /* rpc */
     TR_KEY_availability, // rpc
+    TR_KEY_ban_choking_peers,
     TR_KEY_bandwidth_priority_kebab_APICOMPAT,
     TR_KEY_bandwidth_priority_camel_APICOMPAT,
     TR_KEY_bandwidth_priority,

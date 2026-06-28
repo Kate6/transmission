@@ -48,7 +48,7 @@ sig_atomic_t manualUpdate = false;
 
 char const* torrentPath = nullptr;
 
-auto constexpr Options = std::array<tr_option, 27>{
+auto constexpr Options = std::array<tr_option, 28>{
     { tr_option{ 'b', "blocklist", "Enable peer blocklists", "b", tr_option::Arg::None, nullptr },
       tr_option{ 'B', "no-blocklist", "Disable peer blocklists", "B", tr_option::Arg::None, nullptr },
       tr_option{ 'd', "downlimit", "Set max download speed in kB/s", "d", tr_option::Arg::Required, "<speed>" },
@@ -85,6 +85,7 @@ auto constexpr Options = std::array<tr_option, 27>{
       tr_option{ 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", tr_option::Arg::Required, "<ip addr>" },
       tr_option{ 600, "bind-interface", "Bind to specific interface", "inf", tr_option::Arg::Required, "<interface>" },
       tr_option{ 's', "stalled-minutes", "Minutes with no data before failing", "s", tr_option::Arg::Required, "<minutes>" },
+      tr_option{ 601, "ban-choking-peers", "Drop and temp-ban peers that choke us", "bch", tr_option::Arg::None, nullptr },
       tr_option{ 0, nullptr, nullptr, nullptr, tr_option::Arg::None, nullptr } }
 };
 
@@ -293,6 +294,10 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
 
         case 600:
             tr_variantDictAddStr(d, TR_KEY_bind_interface, my_optarg);
+            break;
+
+        case 601:
+            tr_variantDictAddBool(d, TR_KEY_ban_choking_peers, true);
             break;
 
         case 'w':

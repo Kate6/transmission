@@ -665,7 +665,16 @@ public:
             break;
 
         case tr_peer_event::Type::ClientGotChoke:
-            s->got_choke(s->tor, msgs->active_requests);
+            if (s->tor->session->banChokingPeers())
+            {
+                auto const now = tr_time();
+                s->tor->session->choked_bans_[msgs->socket_address().address()] = now + 30;
+                msgs->disconnect_soon();
+            }
+            else
+            {
+                s->got_choke(s->tor, msgs->active_requests);
+            }
             break;
 
         case tr_peer_event::Type::ClientGotPort:
@@ -2451,6 +2460,20 @@ void tr_peerMgr::bandwidth_pulse()
         tor->do_idle_work();
     }
 
+    // sweep expired temp-bans
+    auto const now = tr_time();
+    for (auto iter = session->choked_bans_.begin(); iter != session->choked_bans_.end();)
+    {
+        if (iter->second <= now)
+        {
+            iter = session->choked_bans_.erase(iter);
+        }
+        else
+        {
+            ++iter;
+        }
+    }
+
     reconnect_pulse();
 }
 
@@ -2494,6 +2517,12 @@ namespace connect_helpers
     }
 
     return true;
+}
+
+[[nodiscard]] bool is_peer_banned_by_choke(tr_session const* session, tr_peer_info const& peer_info, time_t now)
+{
+    auto const iter = session->choked_bans_.find(peer_info.listen_address());
+    return iter != std::end(session->choked_bans_) && iter->second > now;
 }
 
 [[nodiscard]] constexpr uint64_t addValToKey(uint64_t value, unsigned int width, uint64_t addme)
@@ -2630,7 +2659,7 @@ void get_peer_candidates(size_t global_peer_limit, tr_torrents& torrents, tr_pee
 
         for (auto const& [socket_address, peer_info] : swarm->connectable_pool)
         {
-            if (is_peer_candidate(tor, *peer_info, now))
+            if (is_peer_candidate(tor, *peer_info, now) && !is_peer_banned_by_choke(tor->session, *peer_info, now))
             {
                 candidates.emplace_back(getPeerCandidateScore(tor, *peer_info, salter()), tor, peer_info.get());
             }
