@@ -23,6 +23,7 @@
 #include <libtransmission/transmission.h>
 #include <libtransmission/version.h> // LONG_VERSION_STRING
 
+#include "QtCompat.h"
 #include "VariantHelpers.h"
 
 using ::trqt::variant_helpers::dictFind;
@@ -278,6 +279,7 @@ void RpcClient::networkRequestFinished(QNetworkReply* reply)
     }
 }
 
+// NOLINTNEXTLINE(performance-unnecessary-value-param): DO NOT make the parameter a reference as this method is called from another thread
 void RpcClient::localRequestFinished(TrVariantPtr response)
 {
     if (auto node = local_requests_.extract(parseResponseId(*response)))
@@ -316,7 +318,20 @@ RpcResponse RpcClient::parseResponseData(tr_variant& response) const
         {
             if (auto const errmsg = error_map->value_if<std::string_view>(TR_KEY_message))
             {
-                ret.errmsg = QString::fromUtf8(std::data(*errmsg), std::size(*errmsg));
+                ret.errmsg = QString::fromUtf8(std::data(*errmsg), static_cast<IF_QT6(qsizetype, int)>(std::size(*errmsg)));
+            }
+
+            if (auto* const data = error_map->find_if<tr_variant::Map>(TR_KEY_data))
+            {
+                if (auto const errstr = data->value_if<std::string_view>(TR_KEY_error_string))
+                {
+                    ret.errmsg = QString::fromUtf8(std::data(*errstr), static_cast<IF_QT6(qsizetype, int)>(std::size(*errstr)));
+                }
+
+                if (auto* const result = data->find_if<tr_variant::Map>(TR_KEY_result))
+                {
+                    ret.args = std::make_shared<tr_variant>(std::move(*result));
+                }
             }
         }
     }

@@ -27,17 +27,18 @@
 
 #include <fmt/format.h>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/blocklist.h"
+#include "libtransmission/constants.h"
 #include "libtransmission/crypto-utils.h"
 #include "libtransmission/error.h"
 #include "libtransmission/file.h"
 #include "libtransmission/log.h"
 #include "libtransmission/net.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/tr-strbuf.h"
-#include "libtransmission/utils.h" // for _(), tr_strerror(), tr_strv_ends_with()
+#include "libtransmission/types.h"
+#include "libtransmission/utils.h" // for _()
 
 using namespace std::literals;
 
@@ -49,7 +50,7 @@ namespace
 // A string at the beginning of .bin files to test & make sure we don't load incompatible files
 auto constexpr BinContentsPrefix = std::string_view{ "-tr-blocklist-file-format-v3-" };
 
-// In the blocklists directory, the The plaintext source file can be anything, e.g. "level1".
+// In the blocklists directory, the plaintext source file can be anything, e.g. "level1".
 // The pre-parsed, fast-to-load binary file will have a ".bin" suffix e.g. "level1.bin".
 auto constexpr BinFileSuffix = std::string_view{ ".bin" };
 
@@ -60,30 +61,33 @@ void save(std::string_view filename, address_range_t const* ranges, size_t n_ran
     auto out = std::ofstream{ tr_pathbuf{ filename }, std::ios_base::out | std::ios_base::trunc | std::ios_base::binary };
     if (!out.is_open())
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
-            fmt::arg("path", filename),
-            fmt::arg("error", tr_strerror(errno)),
-            fmt::arg("error_code", errno)));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
+                fmt::arg("path", filename),
+                fmt::arg("error", tr_strerror(errno)),
+                fmt::arg("error_code", errno)));
         return;
     }
 
     if (!out.write(std::data(BinContentsPrefix), std::size(BinContentsPrefix)) ||
-        !out.write(reinterpret_cast<char const*>(ranges), n_ranges * sizeof(*ranges)))
+        !out.write(reinterpret_cast<char const*>(ranges), static_cast<std::streamsize>(n_ranges * sizeof(*ranges))))
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Couldn't save '{path}': {error} ({error_code})")),
-            fmt::arg("path", filename),
-            fmt::arg("error", tr_strerror(errno)),
-            fmt::arg("error_code", errno)));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Couldn't save '{path}': {error} ({error_code})")),
+                fmt::arg("path", filename),
+                fmt::arg("error", tr_strerror(errno)),
+                fmt::arg("error_code", errno)));
     }
     else
     {
-        tr_logAddInfo(fmt::format(
-            fmt::runtime(
-                tr_ngettext("Blocklist '{path}' has {count} entry", "Blocklist '{path}' has {count} entries", n_ranges)),
-            fmt::arg("path", tr_sys_path_basename(filename)),
-            fmt::arg("count", n_ranges)));
+        tr_logAddInfo(
+            fmt::format(
+                fmt::runtime(
+                    tr_ngettext("Blocklist '{path}' has {count} entry", "Blocklist '{path}' has {count} entries", n_ranges)),
+                fmt::arg("path", tr_sys_path_basename(filename)),
+                fmt::arg("count", n_ranges)));
     }
 
     out.close();
@@ -230,28 +234,44 @@ std::optional<address_range_t> parseLine(std::string_view line)
 }
 } // namespace ParseHelpers
 
-auto parseFile(std::string_view filename)
+std::optional<std::vector<address_range_t>> parseFile(std::string_view filename)
 {
     using namespace ParseHelpers;
-
-    auto ranges = std::vector<address_range_t>{};
 
     auto in = std::ifstream{ tr_pathbuf{ filename } };
     if (!in.is_open())
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
-            fmt::arg("path", filename),
-            fmt::arg("error", tr_strerror(errno)),
-            fmt::arg("error_code", errno)));
-        return ranges;
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
+                fmt::arg("path", filename),
+                fmt::arg("error", tr_strerror(errno)),
+                fmt::arg("error_code", errno)));
+        return {};
     }
+
+    auto ranges = std::vector<address_range_t>{};
 
     auto line = std::string{};
     auto line_number = size_t{ 0U };
+    auto is_empty = true;
     while (std::getline(in, line))
     {
         ++line_number;
+
+        // ignore empty lines
+        if (std::empty(line) || std::ranges::all_of(line, [](char c) { return std::isspace(static_cast<unsigned char>(c)); }))
+        {
+            continue;
+        }
+
+        // ignore comments
+        if (tr_strv_starts_with(line, "//"sv) || tr_strv_starts_with(line, "#"sv))
+        {
+            continue;
+        }
+
+        is_empty = false;
         if (auto range = parseLine(line); range && (range->first.type == range->second.type))
         {
             ranges.push_back(*range);
@@ -259,17 +279,18 @@ auto parseFile(std::string_view filename)
         else
         {
             auto const base64 = tr_base64_encode(line);
-            tr_logAddWarn(fmt::format(
-                fmt::runtime(_("Couldn't parse line {line}: {base64}")),
-                fmt::arg("line", line_number),
-                fmt::arg("base64", base64)));
+            tr_logAddWarn(
+                fmt::format(
+                    fmt::runtime(_("Couldn't parse line {line}: {base64}")),
+                    fmt::arg("line", line_number),
+                    fmt::arg("base64", base64)));
         }
     }
     in.close();
 
     if (std::empty(ranges))
     {
-        return ranges;
+        return is_empty ? std::make_optional(std::move(ranges)) : std::nullopt;
     }
 
     // safeguard against some joker swapping the begin & end ranges
@@ -330,21 +351,23 @@ auto getFilenamesInDir(std::string_view folder)
 
 void Blocklists::Blocklist::ensureLoaded() const
 {
-    if (!std::empty(rules_))
+    if (rules_)
     {
         return;
     }
+    rules_.emplace();
 
     // get the file's size
     auto error = tr_error{};
     auto const file_info = tr_sys_path_get_info(bin_file_, 0, &error);
     if (error)
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
-            fmt::arg("path", bin_file_),
-            fmt::arg("error", error.message()),
-            fmt::arg("error_code", error.code())));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
+                fmt::arg("path", bin_file_),
+                fmt::arg("error", error.message()),
+                fmt::arg("error_code", error.code())));
     }
     if (!file_info)
     {
@@ -355,11 +378,12 @@ void Blocklists::Blocklist::ensureLoaded() const
     auto in = std::ifstream{ bin_file_, std::ios_base::in | std::ios_base::binary };
     if (!in)
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
-            fmt::arg("path", bin_file_),
-            fmt::arg("error", tr_strerror(errno)),
-            fmt::arg("error_code", errno)));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
+                fmt::arg("path", bin_file_),
+                fmt::arg("error", tr_strerror(errno)),
+                fmt::arg("error_code", errno)));
         return;
     }
 
@@ -387,29 +411,38 @@ void Blocklists::Blocklist::ensureLoaded() const
         if (auto const sz_src_file = std::string{ std::data(bin_file_), std::size(bin_file_) - std::size(BinFileSuffix) };
             tr_sys_path_exists(sz_src_file))
         {
-            rules_ = parseFile(sz_src_file);
-            if (!std::empty(rules_))
+            if (auto rules = parseFile(sz_src_file))
             {
-                tr_logAddInfo(_("Rewriting old blocklist file format to new format"));
-                tr_sys_path_remove(bin_file_);
-                save(bin_file_, std::data(rules_), std::size(rules_));
+                rules_ = std::move(*rules);
             }
+
+            // N.B. Even if the source file cannot be parsed, save an empty bin file
+            // so that the source file won't be parsed on the next reload(s) until it
+            // was modified.
+            tr_logAddInfo(
+                fmt::format(
+                    fmt::runtime(_("Rewriting old blocklist file {path} to new format")),
+                    fmt::arg("path", tr_sys_path_basename(bin_file_))));
+            save(bin_file_, std::data(*rules_), std::size(*rules_));
         }
         return;
     }
 
     auto range = address_range_t{};
-    rules_.reserve((file_info->size - std::size(BinContentsPrefix)) / sizeof(address_range_t));
+    rules_->reserve((file_info->size - std::size(BinContentsPrefix)) / sizeof(address_range_t));
     while (in.read(reinterpret_cast<char*>(&range), sizeof(range)))
     {
-        rules_.emplace_back(range);
+        rules_->emplace_back(range);
     }
 
-    tr_logAddInfo(fmt::format(
-        fmt::runtime(
-            tr_ngettext("Blocklist '{path}' has {count} entry", "Blocklist '{path}' has {count} entries", std::size(rules_))),
-        fmt::arg("path", tr_sys_path_basename(bin_file_)),
-        fmt::arg("count", std::size(rules_))));
+    tr_logAddInfo(
+        fmt::format(
+            fmt::runtime(tr_ngettext(
+                "Blocklist '{path}' has {count} entry",
+                "Blocklist '{path}' has {count} entries",
+                std::size(*rules_))),
+            fmt::arg("path", tr_sys_path_basename(bin_file_)),
+            fmt::arg("count", std::size(*rules_))));
 }
 
 bool Blocklists::Blocklist::contains(tr_address const& addr) const
@@ -422,8 +455,9 @@ bool Blocklists::Blocklist::contains(tr_address const& addr) const
     }
 
     ensureLoaded();
+    TR_ASSERT(rules_);
 
-    struct Compare
+    static constexpr struct
     {
         [[nodiscard]] static auto compare(tr_address const& a, address_range_t const& b) noexcept // <=>
         {
@@ -452,9 +486,10 @@ bool Blocklists::Blocklist::contains(tr_address const& addr) const
         {
             return compare(a, b) < 0;
         }
-    };
+    } Compare;
 
-    return std::binary_search(std::begin(rules_), std::end(rules_), addr, Compare{});
+    // NOLINTNEXTLINE(modernize-use-ranges)
+    return rules_ && std::binary_search(std::begin(*rules_), std::end(*rules_), addr, Compare);
 }
 
 std::optional<Blocklists::Blocklist> Blocklists::Blocklist::saveNew(
@@ -464,7 +499,7 @@ std::optional<Blocklists::Blocklist> Blocklists::Blocklist::saveNew(
 {
     // if we can't parse the file, do nothing
     auto rules = parseFile(external_file);
-    if (std::empty(rules))
+    if (!rules)
     {
         return {};
     }
@@ -476,22 +511,23 @@ std::optional<Blocklists::Blocklist> Blocklists::Blocklist::saveNew(
     auto const copied = tr_sys_path_copy(external_file, src_file, &error);
     if (error)
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Couldn't save '{path}': {error} ({error_code})")),
-            fmt::arg("path", src_file),
-            fmt::arg("error", error.message()),
-            fmt::arg("error_code", error.code())));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Couldn't save '{path}': {error} ({error_code})")),
+                fmt::arg("path", src_file),
+                fmt::arg("error", error.message()),
+                fmt::arg("error_code", error.code())));
     }
     if (!copied)
     {
         return {};
     }
 
-    save(bin_file, std::data(rules), std::size(rules));
+    save(bin_file, std::data(*rules), std::size(*rules));
 
     // return a new Blocklist with these rules
     auto ret = Blocklist{ bin_file, is_enabled };
-    ret.rules_ = std::move(rules);
+    ret.rules_ = std::move(*rules);
     return ret;
 }
 
@@ -516,7 +552,7 @@ void Blocklists::load(std::string_view folder, bool is_enabled)
 }
 
 // static
-std::vector<Blocklists::Blocklist> Blocklists::Blocklists::load_folder(std::string_view const folder, bool const is_enabled)
+std::vector<Blocklists::Blocklist> Blocklists::load_folder(std::string_view const folder, bool const is_enabled)
 {
     // check for files that need to be updated
     for (auto const& src_file : getFilenamesInDir(folder))
@@ -533,9 +569,9 @@ std::vector<Blocklists::Blocklist> Blocklists::Blocklists::load_folder(std::stri
         auto const bin_needs_update = src_info && (!bin_info || bin_info->last_modified_at <= src_info->last_modified_at);
         if (bin_needs_update)
         {
-            if (auto const ranges = parseFile(src_file); !std::empty(ranges))
+            if (auto const ranges = parseFile(src_file))
             {
-                save(bin_file, std::data(ranges), std::size(ranges));
+                save(bin_file, std::data(*ranges), std::size(*ranges));
             }
         }
     }
@@ -551,7 +587,7 @@ std::vector<Blocklists::Blocklist> Blocklists::Blocklists::load_folder(std::stri
     return ret;
 }
 
-size_t Blocklists::update_primary_blocklist(std::string_view const external_file, bool const is_enabled)
+std::optional<size_t> Blocklists::update_primary_blocklist(std::string_view const external_file, bool const is_enabled)
 {
     // These rules will replace the default blocklist.
     // Build the path of the default blocklist .bin file where we'll save these rules.
@@ -561,7 +597,7 @@ size_t Blocklists::update_primary_blocklist(std::string_view const external_file
     auto added = Blocklist::saveNew(external_file, bin_file, is_enabled);
     if (!added)
     {
-        return 0U;
+        return {};
     }
 
     auto const n_rules = std::size(*added);

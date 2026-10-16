@@ -15,14 +15,13 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include <sigslot/signal.hpp>
-
-#include "libtransmission/transmission.h"
 
 #include "libtransmission/announce-list.h"
 #include "libtransmission/bandwidth.h"
@@ -39,6 +38,7 @@
 #include "libtransmission/torrent-metainfo.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/tr-macros.h"
+#include "libtransmission/types.h"
 #include "libtransmission/verify.h"
 
 struct tr_ctor;
@@ -181,11 +181,7 @@ struct tr_torrent
 
     void set_location(std::string_view location, bool move_from_old_path, int volatile* setme_state);
 
-    void rename_path(
-        std::string_view oldpath,
-        std::string_view newname,
-        tr_torrent_rename_done_func&& callback,
-        void* callback_user_data);
+    void rename_path(std::string_view oldpath, std::string_view newname, tr_torrent_rename_done_func&& callback);
 
     // these functions should become private when possible,
     // but more refactoring is needed before that can happen
@@ -685,6 +681,11 @@ struct tr_torrent
         return this->is_public() && this->session->allowsLPD();
     }
 
+    [[nodiscard]] auto allows_holepunch() const noexcept
+    {
+        return this->is_public() && this->session->allowsUTP();
+    }
+
     [[nodiscard]] constexpr bool client_can_download() const
     {
         return this->is_piece_transfer_allowed(tr_direction::PeerToClient);
@@ -764,10 +765,6 @@ struct tr_torrent
     {
         if (is_sequential != sequential_download_)
         {
-            if (is_sequential)
-            {
-                session->flush_torrent_files(id());
-            }
             sequential_download_ = is_sequential;
             sequential_download_changed_(this, is_sequential);
             set_dirty();
@@ -1003,6 +1000,14 @@ struct tr_torrent
         }
     }
 
+    static void queue_move_top(std::span<tr_torrent* const> torrents);
+
+    static void queue_move_up(std::span<tr_torrent* const> torrents);
+
+    static void queue_move_down(std::span<tr_torrent* const> torrents);
+
+    static void queue_move_bottom(std::span<tr_torrent* const> torrents);
+
     static constexpr struct
     {
         bool operator()(tr_torrent const* a, tr_torrent const* b) const noexcept
@@ -1206,7 +1211,7 @@ private:
         return {};
     }
 
-    [[nodiscard]] constexpr std::optional<size_t> idle_seconds_left(time_t now) const noexcept
+    [[nodiscard]] constexpr std::optional<time_t> idle_seconds_left(time_t now) const noexcept
     {
         auto const idle_limit_minutes = effective_idle_limit_minutes();
         if (!idle_limit_minutes)
@@ -1337,8 +1342,7 @@ private:
     void rename_path_in_session_thread(
         std::string_view oldpath,
         std::string_view newname,
-        tr_torrent_rename_done_func const& callback,
-        void* callback_user_data);
+        tr_torrent_rename_done_func const& callback);
 
     void start_in_session_thread();
 

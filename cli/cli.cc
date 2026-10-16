@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdio> /* fprintf () */
 #include <cstdlib> /* atoi () */
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -15,6 +16,7 @@
 
 #include <libtransmission/transmission.h>
 
+#include <libtransmission/env.h>
 #include <libtransmission/error.h>
 #include <libtransmission/file.h>
 #include <libtransmission/tr-getopt.h>
@@ -48,49 +50,50 @@ sig_atomic_t manualUpdate = false;
 
 char const* torrentPath = nullptr;
 
-auto constexpr Options = std::array<tr_option, 28>{
-    { tr_option{ 'b', "blocklist", "Enable peer blocklists", "b", tr_option::Arg::None, nullptr },
-      tr_option{ 'B', "no-blocklist", "Disable peer blocklists", "B", tr_option::Arg::None, nullptr },
-      tr_option{ 'd', "downlimit", "Set max download speed in kB/s", "d", tr_option::Arg::Required, "<speed>" },
-      tr_option{ 'D', "no-downlimit", "Don't limit the download speed", "D", tr_option::Arg::None, nullptr },
-      tr_option{ 910, "encryption-required", "Encrypt all peer connections", "er", tr_option::Arg::None, nullptr },
-      tr_option{ 911, "encryption-preferred", "Prefer encrypted peer connections", "ep", tr_option::Arg::None, nullptr },
-      tr_option{ 912, "encryption-tolerated", "Prefer unencrypted peer connections", "et", tr_option::Arg::None, nullptr },
-      tr_option{ 'f', "finish", "Run a script when the torrent finishes", "f", tr_option::Arg::Required, "<script>" },
-      tr_option{ 'g', "config-dir", "Where to find configuration files", "g", tr_option::Arg::Required, "<path>" },
-      tr_option{ 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", tr_option::Arg::None, nullptr },
-      tr_option{ 'M', "no-portmap", "Disable portmapping", "M", tr_option::Arg::None, nullptr },
-      tr_option{ 'p', "port", "Port for incoming peers", "p", tr_option::Arg::Required, "<port>" },
-      tr_option{ 't', "tos", "Peer socket DSCP / ToS setting", "t", tr_option::Arg::Required, "<dscp-or-tos>" },
-      tr_option{ 'u', "uplimit", "Set max upload speed in kB/s", "u", tr_option::Arg::Required, "<speed>" },
-      tr_option{ 'U', "no-uplimit", "Don't limit the upload speed", "U", tr_option::Arg::None, nullptr },
-      tr_option{ 'v', "verify", "Verify the specified torrent", "v", tr_option::Arg::None, nullptr },
-      tr_option{ 'V', "version", "Show version number and exit", "V", tr_option::Arg::None, nullptr },
-      tr_option{ 'w', "download-dir", "Where to save downloaded data", "w", tr_option::Arg::Required, "<path>" },
-      tr_option{ 500, "sequential-download", "Download pieces sequentially", "seq", tr_option::Arg::None, nullptr },
-      tr_option{ 'S', "dont-seed", "Don't seed longer than absolutely necessary", "S", tr_option::Arg::None, nullptr },
-      tr_option{ 'E', "simple-peer", "Disable uTP, PEX and DHT", "E", tr_option::Arg::None, nullptr },
-      tr_option{ 'i',
-                 "bind-address-ipv4",
-                 "Where to listen for peer connections",
-                 "i",
-                 tr_option::Arg::Required,
-                 "<ipv4 addr>" },
-      tr_option{ 'I',
-                 "bind-address-ipv6",
-                 "Where to listen for peer connections",
-                 "I",
-                 tr_option::Arg::Required,
-                 "<ipv6 addr>" },
-      tr_option{ 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", tr_option::Arg::Required, "<ip addr>" },
-      tr_option{ 600, "bind-interface", "Bind to specific interface", "inf", tr_option::Arg::Required, "<interface>" },
-      tr_option{ 's', "stalled-minutes", "Minutes with no data before failing", "s", tr_option::Arg::Required, "<minutes>" },
-      tr_option{ 601, "ban-choking-peers", "Drop and temp-ban peers that choke us", "bch", tr_option::Arg::None, nullptr },
-      tr_option{ 0, nullptr, nullptr, nullptr, tr_option::Arg::None, nullptr } }
-};
+using Arg = tr_option::Arg;
+static_assert(TrDefaultPeerPort == 51413, "update 'port' desc");
+static_assert(TrDefaultPeerSocketTos == "le", "update 'tos' desc");
+auto constexpr Options = std::array<tr_option, 28>{ {
+    { 'b', "blocklist", "Enable peer blocklists", "b", Arg::None, nullptr },
+    { 'B', "no-blocklist", "Disable peer blocklists", "B", Arg::None, nullptr },
+    { 'd', "downlimit", "Set max download speed in " SPEED_K_STR, "d", Arg::Required, "<speed>" },
+    { 'D', "no-downlimit", "Don't limit the download speed", "D", Arg::None, nullptr },
+    { 910, "encryption-required", "Encrypt all peer connections", "er", Arg::None, nullptr },
+    { 911, "encryption-preferred", "Prefer encrypted peer connections", "ep", Arg::None, nullptr },
+    { 912, "encryption-tolerated", "Prefer unencrypted peer connections", "et", Arg::None, nullptr },
+    { 'f', "finish", "Run a script when the torrent finishes", "f", Arg::Required, "<script>" },
+    { 'g', "config-dir", "Where to find configuration files", "g", Arg::Required, "<path>" },
+    { 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", Arg::None, nullptr },
+    { 'M', "no-portmap", "Disable portmapping", "M", Arg::None, nullptr },
+    { 'p', "port", "Port for incoming peers (Default: 51413)", "p", Arg::Required, "<port>" },
+    { 't',
+      "tos",
+      "Peer socket DSCP / ToS. Number or DSCP string, e.g. 'af11' or 'cs0' (Default: 'le')",
+      "t",
+      Arg::Required,
+      "<dscp-or-tos>" },
+    { 'u', "uplimit", "Set max upload speed in " SPEED_K_STR, "u", Arg::Required, "<speed>" },
+    { 'U', "no-uplimit", "Don't limit the upload speed", "U", Arg::None, nullptr },
+    { 'v', "verify", "Verify the specified torrent", "v", Arg::None, nullptr },
+    { 'V', "version", "Show version number and exit", "V", Arg::None, nullptr },
+    { 'w', "download-dir", "Where to save downloaded data", "w", Arg::Required, "<path>" },
+    { 500, "sequential-download", "Download pieces sequentially", "seq", Arg::None, nullptr },
+    { 'S', "dont-seed", "Don't seed longer than absolutely necessary", "S", Arg::None, nullptr },
+    { 'E', "simple-peer", "Disable uTP, PEX and DHT", "E", Arg::None, nullptr },
+    { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", Arg::Required, "<ipv4 addr>" },
+    { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", Arg::Required, "<ipv6 addr>" },
+    { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", Arg::Required, "<ip addr>" },
+    { 's', "stalled-minutes", "Minutes with no data before failing", "s", Arg::Required, "<minutes>" },
+    { 600, "bind-interface", "Bind to specific interface", "inf", Arg::Required, "<interface>" },
+    { 601, "ban-choking-peers", "Drop and temp-ban peers that choke us", "bch", Arg::None, nullptr },
 
-int parseCommandLine(tr_variant*, int argc, char const** argv);
+    { 0, nullptr, nullptr, nullptr, Arg::None, nullptr },
+} };
+static_assert(Options[std::size(Options) - 2].val != 0);
+} // namespace
 
+namespace
+{
 void sigHandler(int signal);
 
 [[nodiscard]] std::string tr_strlratio(double ratio)
@@ -199,7 +202,7 @@ void onTorrentFileDownloaded(tr_web::FetchResponse const& response)
 
 // ---
 
-int parseCommandLine(tr_variant* d, int argc, char const** argv)
+int parseCommandLine(tr_variant::Map& map, int argc, char const** argv)
 {
     int c;
     char const* my_optarg;
@@ -209,53 +212,53 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
         switch (c)
         {
         case 'b':
-            tr_variantDictAddBool(d, TR_KEY_blocklist_enabled, true);
+            map[TR_KEY_blocklist_enabled] = true;
             break;
 
         case 'B':
-            tr_variantDictAddBool(d, TR_KEY_blocklist_enabled, false);
+            map[TR_KEY_blocklist_enabled] = false;
             break;
 
         case 'd':
-            tr_variantDictAddInt(d, TR_KEY_speed_limit_down, atoi(my_optarg));
-            tr_variantDictAddBool(d, TR_KEY_speed_limit_down_enabled, true);
+            map[TR_KEY_speed_limit_down] = int64_t(atoi(my_optarg));
+            map[TR_KEY_speed_limit_down_enabled] = true;
             break;
 
         case 'D':
-            tr_variantDictAddBool(d, TR_KEY_speed_limit_down_enabled, false);
+            map[TR_KEY_speed_limit_down_enabled] = false;
             break;
 
         case 'f':
-            tr_variantDictAddStr(d, TR_KEY_script_torrent_done_filename, my_optarg);
-            tr_variantDictAddBool(d, TR_KEY_script_torrent_done_enabled, true);
+            map[TR_KEY_script_torrent_done_filename] = my_optarg;
+            map[TR_KEY_script_torrent_done_enabled] = true;
             break;
 
         case 'g': /* handled above */
             break;
 
         case 'm':
-            tr_variantDictAddBool(d, TR_KEY_port_forwarding_enabled, true);
+            map[TR_KEY_port_forwarding_enabled] = true;
             break;
 
         case 'M':
-            tr_variantDictAddBool(d, TR_KEY_port_forwarding_enabled, false);
+            map[TR_KEY_port_forwarding_enabled] = false;
             break;
 
         case 'p':
-            tr_variantDictAddInt(d, TR_KEY_peer_port, atoi(my_optarg));
+            map[TR_KEY_peer_port] = int64_t(atoi(my_optarg));
             break;
 
         case 't':
-            tr_variantDictAddStr(d, TR_KEY_peer_socket_diffserv, my_optarg);
+            map[TR_KEY_peer_socket_diffserv] = my_optarg;
             break;
 
         case 'u':
-            tr_variantDictAddInt(d, TR_KEY_speed_limit_up, atoi(my_optarg));
-            tr_variantDictAddBool(d, TR_KEY_speed_limit_up_enabled, true);
+            map[TR_KEY_speed_limit_up] = int64_t(atoi(my_optarg));
+            map[TR_KEY_speed_limit_up_enabled] = true;
             break;
 
         case 'U':
-            tr_variantDictAddBool(d, TR_KEY_speed_limit_up_enabled, false);
+            map[TR_KEY_speed_limit_up_enabled] = false;
             break;
 
         case 'v':
@@ -267,62 +270,62 @@ int parseCommandLine(tr_variant* d, int argc, char const** argv)
             break;
 
         case 'S':
-            tr_variantDictAddBool(d, TR_KEY_ratio_limit_enabled, true);
-            tr_variantDictAddReal(d, TR_KEY_ratio_limit, 0.0);
-            tr_variantDictAddBool(d, TR_KEY_idle_seeding_limit_enabled, true);
-            tr_variantDictAddInt(d, TR_KEY_idle_seeding_limit, 1.0);
+            map[TR_KEY_seed_ratio_limited] = true;
+            map[TR_KEY_seed_ratio_limit] = 0.0;
+            map[TR_KEY_idle_seeding_limit_enabled] = true;
+            map[TR_KEY_idle_seeding_limit] = int64_t{ 1 };
             break;
 
         case 'E':
             // disable dht, pex and utp
-            tr_variantDictAddBool(d, TR_KEY_dht_enabled, false);
-            tr_variantDictAddBool(d, TR_KEY_pex_enabled, false);
-            tr_variantDictAddBool(d, TR_KEY_utp_enabled, false);
+            map[TR_KEY_dht_enabled] = false;
+            map[TR_KEY_pex_enabled] = false;
+            map[TR_KEY_utp_enabled] = false;
             break;
 
         case 'i':
-            tr_variantDictAddStr(d, TR_KEY_bind_address_ipv4, my_optarg);
+            map[TR_KEY_bind_address_ipv4] = my_optarg;
             break;
 
         case 'I':
-            tr_variantDictAddStr(d, TR_KEY_bind_address_ipv6, my_optarg);
+            map[TR_KEY_bind_address_ipv6] = my_optarg;
             break;
 
         case 'r':
-            tr_variantDictAddStr(d, TR_KEY_rpc_bind_address, my_optarg);
+            map[TR_KEY_rpc_bind_address] = my_optarg;
             break;
 
         case 600:
-            tr_variantDictAddStr(d, TR_KEY_bind_interface, my_optarg);
+            map[TR_KEY_bind_interface] = my_optarg;
             break;
 
         case 601:
-            tr_variantDictAddBool(d, TR_KEY_ban_choking_peers, true);
+            map[TR_KEY_ban_choking_peers] = true;
             break;
 
         case 'w':
-            tr_variantDictAddStr(d, TR_KEY_download_dir, my_optarg);
+            map[TR_KEY_download_dir] = my_optarg;
             break;
 
         case 910:
-            tr_variantDictAddInt(d, TR_KEY_encryption, TR_ENCRYPTION_REQUIRED);
+            map[TR_KEY_encryption] = int64_t(TR_ENCRYPTION_REQUIRED);
             break;
 
         case 911:
-            tr_variantDictAddInt(d, TR_KEY_encryption, TR_ENCRYPTION_PREFERRED);
+            map[TR_KEY_encryption] = int64_t(TR_ENCRYPTION_PREFERRED);
             break;
 
         case 912:
-            tr_variantDictAddInt(d, TR_KEY_encryption, TR_CLEAR_PREFERRED);
+            map[TR_KEY_encryption] = int64_t(TR_CLEAR_PREFERRED);
             break;
 
         case 500:
-            tr_variantDictAddBool(d, TR_KEY_sequential_download, true);
+            map[TR_KEY_sequential_download] = true;
             break;
 
         case 's':
-            tr_variantDictAddBool(d, TR_KEY_queue_stalled_enabled, true);
-            tr_variantDictAddInt(d, TR_KEY_queue_stalled_minutes, atoi(my_optarg));
+            map[TR_KEY_queue_stalled_enabled] = true;
+            map[TR_KEY_queue_stalled_minutes] = int64_t(atoi(my_optarg));
             break;
 
         case TR_OPT_UNK:
@@ -400,7 +403,7 @@ int tr_main(int argc, char* argv[])
     auto settings = tr_sessionLoadSettings(config_dir);
 
     /* the command line overrides defaults */
-    if (parseCommandLine(&settings, argc, (char const**)argv) != 0)
+    if (parseCommandLine(*settings.get_if<tr_variant::Map>(), argc, (char const**)argv) != 0)
     {
         return EXIT_FAILURE;
     }
@@ -507,11 +510,12 @@ int tr_main(int argc, char* argv[])
         printf("\r%-*s", LineWidth, status_str.c_str());
         fflush(stdout);
 
-        bool ratio_limit_enabled = false;
-        double ratio_limit = 0.0;
-        if (tr_variantDictFindBool(&settings, TR_KEY_ratio_limit_enabled, &ratio_limit_enabled) && ratio_limit_enabled &&
-            tr_variantDictFindReal(&settings, TR_KEY_ratio_limit, &ratio_limit) && ratio_limit <= 0.0 &&
-            st.activity == TR_STATUS_SEED)
+        auto const* const settings_map = settings.get_if<tr_variant::Map>();
+        auto const ratio_limit_enabled = settings_map != nullptr &&
+            settings_map->value_if<bool>(TR_KEY_seed_ratio_limited).value_or(false);
+        auto const ratio_limit = settings_map != nullptr ? settings_map->value_if<double>(TR_KEY_seed_ratio_limit) :
+                                                           std::optional<double>{};
+        if (ratio_limit_enabled && ratio_limit && *ratio_limit <= 0.0 && st.activity == TR_STATUS_SEED)
         {
             break;
         }

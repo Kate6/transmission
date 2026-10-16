@@ -71,6 +71,7 @@ export class Remote {
         if (this._connection_alert) {
           this._connection_alert.close();
           this._connection_alert = null;
+          this._controller._initializeTorrents();
         }
       })
       .catch((error) => {
@@ -187,9 +188,9 @@ export class Remote {
 
   changeFileCommand(torrentId, fileIndices, command) {
     const params = {
+      [command]: fileIndices,
       ids: [torrentId],
     };
-    params[command] = fileIndices;
     this.sendRequest(
       {
         jsonrpc: RPC._JsonRpcVersion,

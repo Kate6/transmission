@@ -16,11 +16,10 @@
 #include <utility>
 #include <vector>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/file.h"
 #include "libtransmission/tr-macros.h"
 #include "libtransmission/tr-strbuf.h"
+#include "libtransmission/types.h"
 
 struct tr_error;
 
@@ -91,13 +90,12 @@ public:
     {
         auto ret = std::vector<std::pair<std::string /*path*/, uint64_t /*size*/>>{};
         ret.reserve(std::size(files_));
-        std::transform(
-            std::begin(files_),
-            std::end(files_),
+        std::ranges::transform(
+            files_,
             std::back_inserter(ret),
             [](auto const& in) { return std::make_pair(in.path_, in.size_); });
 
-        std::sort(std::begin(ret), std::end(ret), [](auto const& lhs, auto const& rhs) { return lhs.first < rhs.first; });
+        std::ranges::sort(std::views::keys(ret));
 
         return ret;
     }
@@ -157,6 +155,7 @@ public:
 
     [[nodiscard]] std::optional<FoundFile> find(tr_file_index_t file, std::string_view const* paths, size_t n_paths) const;
     [[nodiscard]] bool has_any_local_data(std::string_view const* paths, size_t n_paths) const;
+    [[nodiscard]] std::string_view primary_mime_type() const;
 
     static void sanitize_subpath(std::string_view path, tr_pathbuf& append_me, bool os_specific = true);
 

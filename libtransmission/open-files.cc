@@ -6,12 +6,11 @@
 #include <algorithm> // std::min
 #include <array>
 #include <cstdint> // uint8_t, uint64_t
+#include <span>
 #include <string_view>
 #include <utility>
 
 #include <fmt/format.h>
-
-#include "libtransmission/transmission.h"
 
 #include "libtransmission/error-types.h"
 #include "libtransmission/error.h"
@@ -20,6 +19,7 @@
 #include "libtransmission/open-files.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/tr-strbuf.h"
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h" // _()
 
 namespace
@@ -98,7 +98,8 @@ bool preallocate_file_full(tr_sys_file_t fd, uint64_t length, tr_error* error)
         {
             uint64_t const this_pass = std::min(length, uint64_t{ std::size(buf) });
             uint64_t bytes_written = 0;
-            success = tr_sys_file_write(fd, std::data(buf), this_pass, &bytes_written, &local_error);
+            auto const bytes = std::as_bytes(std::span{ buf }.first(static_cast<size_t>(this_pass)));
+            success = tr_sys_file_write(fd, bytes.data(), bytes.size_bytes(), &bytes_written, &local_error);
             length -= bytes_written;
         }
 
@@ -142,7 +143,7 @@ std::optional<tr_sys_file_t> tr_open_files::get(
     tr_file_index_t file_num,
     bool writable,
     std::string_view const filename,
-    Preallocation allocation,
+    tr_file_preallocation allocation,
     uint64_t file_size)
 {
     // is there already an entry
@@ -193,17 +194,17 @@ std::optional<tr_sys_file_t> tr_open_files::get(
         return {};
     }
 
-    if (writable && !already_existed && allocation != Preallocation::None)
+    if (writable && !already_existed && allocation != tr_file_preallocation::None)
     {
         bool success = false;
         char const* type = nullptr;
 
-        if (allocation == Preallocation::Full)
+        if (allocation == tr_file_preallocation::Full)
         {
             success = preallocate_file_full(fd, file_size, &error);
             type = "full";
         }
-        else if (allocation == Preallocation::Sparse)
+        else if (allocation == tr_file_preallocation::Sparse)
         {
             success = preallocate_file_sparse(fd, file_size, &error);
             type = "sparse";

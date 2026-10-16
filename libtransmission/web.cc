@@ -39,6 +39,7 @@
 #ifdef _WIN32
 #include "libtransmission/crypto-utils.h"
 #endif
+#include "libtransmission/env.h"
 #include "libtransmission/log.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/utils.h"
@@ -139,7 +140,7 @@ CURLcode ssl_context_func(CURL* /*curl*/, void* ssl_ctx, void* /*user_data*/)
                 break;
             }
 
-            auto* const cert = tr_x509_cert_new(sys_cert->pbCertEncoded, sys_cert->cbCertEncoded);
+            auto* const cert = tr_x509_cert_new(sys_cert->pbCertEncoded, static_cast<long>(sys_cert->cbCertEncoded));
             if (cert == nullptr)
             {
                 continue;
@@ -223,25 +224,32 @@ public:
 
     ~Impl()
     {
-        deadline_ns_ = to_ns(mediator.now());
-        queued_tasks_cv_.notify_one();
+        startShutdown(0ms);
         curl_thread->join();
     }
 
     void startShutdown(std::chrono::milliseconds deadline)
     {
-        deadline_ns_ = to_ns(mediator.now() + deadline);
+        // Set the deadline under the mutex.
+        // curlThreadFunc() tests the deadline to decide whether to sleep.
+        // An unsynchronized store could land between that test and the
+        // sleep and go unnoticed.
+        {
+            auto const lock = std::unique_lock{ tasks_mutex_ };
+            deadline_ns_ = to_ns(mediator.now() + deadline);
+        }
         queued_tasks_cv_.notify_one();
     }
 
     void fetch(FetchOptions&& options)
     {
-        if (deadline_exists())
+        auto const lock = std::unique_lock{ tasks_mutex_ };
+
+        if (deadline_exists()) // no new tasks once shutdown has begun
         {
             return;
         }
 
-        auto const lock = std::unique_lock{ tasks_mutex_ };
         queued_tasks_.emplace_back(*this, std::move(options));
         queued_tasks_cv_.notify_one();
     }
@@ -434,6 +442,9 @@ public:
     static auto constexpr BandwidthPauseMsec = long{ 500 };
     static auto constexpr DnsCacheTimeoutSecs = long{ 60 * 60 };
     static auto constexpr MaxRedirects = long{ 10 };
+    static auto constexpr MaxHostConnections = long{ 16 };
+    static auto constexpr MaxTotalConnections = long{ 96 };
+    static auto constexpr MaxCachedConnections = MaxTotalConnections;
 
     bool const curl_verbose = tr_env_key_exists("TR_CURL_VERBOSE");
     bool const curl_ssl_verify = !tr_env_key_exists("TR_CURL_SSL_NO_VERIFY");
@@ -719,6 +730,13 @@ public:
     void curlThreadFunc()
     {
         auto const multi = curl_helpers::multi_unique_ptr{ curl_multi_init() };
+#if LIBCURL_VERSION_NUM >= 0x071003 /* 7.16.3 */
+        (void)curl_multi_setopt(multi.get(), CURLMOPT_MAXCONNECTS, MaxCachedConnections);
+#endif
+#if LIBCURL_VERSION_NUM >= 0x071E00 /* 7.30.0 */
+        (void)curl_multi_setopt(multi.get(), CURLMOPT_MAX_TOTAL_CONNECTIONS, MaxTotalConnections);
+        (void)curl_multi_setopt(multi.get(), CURLMOPT_MAX_HOST_CONNECTIONS, MaxHostConnections);
+#endif
         auto const start_time = mediator.now();
 
         auto repeats = unsigned{};
@@ -734,21 +752,26 @@ public:
                 }
             }
 
-            if (deadline_exists() && is_idle())
-            {
-                break;
-            }
-
             if (auto lock = std::unique_lock{ tasks_mutex_ }; lock.owns_lock())
             {
-                // sleep until there's something to do
                 auto const stop_waiting = [this]()
                 {
-                    return !is_idle() || !deadline_exists();
+                    return !is_idle() || deadline_exists();
                 };
+
+                // A pending shutdown ends the wait so that the loop reaches
+                // the exit check below.
+                // The timeout keeps libcurl's connection cache serviced
+                // while no tasks are running.
+                static auto constexpr IdleUpkeepInterval = std::chrono::seconds{ 1 };
                 if (!stop_waiting())
                 {
-                    queued_tasks_cv_.wait(lock, stop_waiting);
+                    queued_tasks_cv_.wait_for(lock, IdleUpkeepInterval, stop_waiting);
+                }
+
+                if (deadline_exists() && is_idle())
+                {
+                    break;
                 }
 
                 // add queued tasks
@@ -766,10 +789,10 @@ public:
 
             resumePausedTasks();
 
-            // During steady state, wake up once per second.
-            // But during startup, wake up 10x more often. This is so tests
-            // that should take a few msec don't block for a full second
-            // while tr_session waits for this thread to finish.
+            // Poll the running tasks once per second during steady state.
+            // Poll 10x more often during startup, so that tests that should
+            // take a few msec don't block for a full second while
+            // tr_session waits for this thread to finish.
             static auto constexpr StartupSecs = std::chrono::seconds{ 15 };
             auto const timeout_ms = mediator.now() - start_time < StartupSecs ? 50 : 1000;
 
@@ -868,10 +891,9 @@ tr_web::tr_web(Mediator& mediator)
 {
 }
 
-tr_web::~tr_web()
-{
-    impl_->startShutdown(0ms);
-}
+// ~Impl() itself starts an immediate shutdown before joining the curl
+// thread, so there's nothing to do here beyond destroying the members
+tr_web::~tr_web() = default;
 
 std::unique_ptr<tr_web> tr_web::create(Mediator& mediator)
 {

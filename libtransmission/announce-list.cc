@@ -11,13 +11,14 @@
 
 #include <small/map.hpp>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/announce-list.h"
 #include "libtransmission/error.h"
+#include "libtransmission/file-utils.h"
 #include "libtransmission/quark.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/tr-assert.h"
-#include "libtransmission/utils.h"
+#include "libtransmission/tr-strbuf.h"
+#include "libtransmission/types.h"
 #include "libtransmission/variant.h"
 #include "libtransmission/web-utils.h"
 
@@ -106,7 +107,7 @@ bool tr_announce_list::add(std::string_view announce_url, tr_tracker_tier_t tier
         tracker.scrape = *scrape_str;
     }
 
-    auto const it = std::lower_bound(std::begin(trackers_), std::end(trackers_), tracker);
+    auto const it = std::ranges::lower_bound(trackers_, tracker);
     trackers_.insert(it, tracker);
 
     return true;

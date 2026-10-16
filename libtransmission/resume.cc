@@ -14,11 +14,10 @@
 
 #include <fmt/format.h>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/api-compat.h"
 #include "libtransmission/bitfield.h"
 #include "libtransmission/error.h"
+#include "libtransmission/file-utils.h"
 #include "libtransmission/file.h"
 #include "libtransmission/log.h"
 #include "libtransmission/net.h"
@@ -26,10 +25,13 @@
 #include "libtransmission/quark.h"
 #include "libtransmission/resume.h"
 #include "libtransmission/session.h"
+#include "libtransmission/serializer.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/torrent-ctor.h"
 #include "libtransmission/torrent-metainfo.h"
 #include "libtransmission/torrent.h"
 #include "libtransmission/tr-assert.h"
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h"
 #include "libtransmission/variant.h"
 
@@ -48,19 +50,27 @@ void save_peers(tr_variant::Map& map, tr_torrent const* tor)
 {
     if (auto const pex = tr_peerMgrGetPeers(tor, TR_AF_INET, TR_PEERS_INTERESTING, MaxRememberedPeers); !std::empty(pex))
     {
-        map.insert_or_assign(TR_KEY_peers2, tr_pex::to_variant(std::data(pex), std::size(pex)));
+        map.insert_or_assign(TR_KEY_peers2, tr::serializer::to_variant(pex));
     }
 
     if (auto const pex = tr_peerMgrGetPeers(tor, TR_AF_INET6, TR_PEERS_INTERESTING, MaxRememberedPeers); !std::empty(pex))
     {
-        map.insert_or_assign(TR_KEY_peers2_6, tr_pex::to_variant(std::data(pex), std::size(pex)));
+        map.insert_or_assign(TR_KEY_peers2_6, tr::serializer::to_variant(pex));
     }
 }
 
 size_t add_peers(tr_torrent* tor, tr_variant::Vector const& l)
 {
     auto const n_pex = std::min(std::size(l), size_t{ MaxRememberedPeers });
-    auto const pex = tr_pex::from_variant(std::data(l), n_pex);
+    auto pex = std::vector<tr_pex>{};
+    pex.reserve(n_pex);
+    for (size_t i = 0; i < n_pex; ++i)
+    {
+        if (auto p = tr::serializer::to_value<tr_pex>(l[i]))
+        {
+            pex.emplace_back(std::move(*p));
+        }
+    }
     return tr_peerMgrAddPex(tor, TR_PEER_FROM_RESUME, std::data(pex), std::size(pex));
 }
 
@@ -252,9 +262,9 @@ void save_speed_limits(tr_variant::Map& map, tr_torrent const* tor)
 void save_ratio_limits(tr_variant::Map& map, tr_torrent const* tor)
 {
     auto d = tr_variant::Map{ 2 };
-    d.try_emplace(TR_KEY_ratio_limit, tor->seed_ratio());
+    d.try_emplace(TR_KEY_seed_ratio_limit, tor->seed_ratio());
     d.try_emplace(TR_KEY_ratio_mode, tor->seed_ratio_mode());
-    map.insert_or_assign(TR_KEY_ratio_limit, std::move(d));
+    map.insert_or_assign(TR_KEY_seed_ratio_limit, std::move(d));
 }
 
 void save_idle_limits(tr_variant::Map& map, tr_torrent const* tor)
@@ -308,13 +318,13 @@ auto load_speed_limits(tr_variant::Map const& map, tr_torrent* tor)
 
 tr_resume::fields_t load_ratio_limits(tr_variant::Map const& map, tr_torrent* tor)
 {
-    auto const* const d = map.find_if<tr_variant::Map>(TR_KEY_ratio_limit);
+    auto const* const d = map.find_if<tr_variant::Map>(TR_KEY_seed_ratio_limit);
     if (d == nullptr)
     {
         return {};
     }
 
-    if (auto const dratio = d->value_if<double>(TR_KEY_ratio_limit))
+    if (auto const dratio = d->value_if<double>(TR_KEY_seed_ratio_limit))
     {
         tor->set_seed_ratio(*dratio);
     }

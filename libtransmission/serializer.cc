@@ -21,16 +21,14 @@
 #include <small/set.hpp>
 #include <small/vector.hpp>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/log.h" // for tr_log_level
-#include "libtransmission/net.h" // for tr_port
-#include "libtransmission/open-files.h" // for tr_open_files::Preallocation
-#include "libtransmission/peer-io.h" // tr_preferred_transport
+#include "libtransmission/peer-mgr.h" // tr_pex
 #include "libtransmission/serializer.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/utils.h" // for tr_strv_strip(), tr_strlower()
 #include "libtransmission/variant.h"
 #include "libtransmission/tr-assert.h"
+#include "libtransmission/types.h"
 
 using namespace std::literals;
 
@@ -134,27 +132,11 @@ tr_variant from_double(double const& val)
 
 // ---
 
-bool to_int(tr_variant const& src, int* tgt)
+template<std::integral T>
+bool to_int(tr_variant const& src, T* tgt)
 {
-    if (auto const val = src.value_if<int64_t>())
-    {
-        *tgt = static_cast<int>(*val);
-        return true;
-    }
-
-    return false;
-}
-
-tr_variant from_int(int const& val)
-{
-    return int64_t{ val };
-}
-
-// ---
-
-bool to_int64(tr_variant const& src, int64_t* tgt)
-{
-    if (auto const val = src.value_if<int64_t>())
+    static_assert(!std::is_same_v<T, bool>);
+    if (auto const val = src.value_if<T>())
     {
         *tgt = *val;
         return true;
@@ -163,8 +145,10 @@ bool to_int64(tr_variant const& src, int64_t* tgt)
     return false;
 }
 
-tr_variant from_int64(int64_t const& val)
+template<std::integral T>
+tr_variant from_int(T const& val)
 {
+    static_assert(!std::is_same_v<T, bool>);
     return val;
 }
 
@@ -237,6 +221,68 @@ tr_variant from_mode_t(tr_mode_t const& val)
 
 // ---
 
+bool to_sched_day(tr_variant const& src, tr_sched_day* tgt)
+{
+    if (auto const val = src.value_if<int64_t>())
+    {
+        switch (*val)
+        {
+        case TR_SCHED_SUN:
+            *tgt = TR_SCHED_SUN;
+            return true;
+
+        case TR_SCHED_MON:
+            *tgt = TR_SCHED_MON;
+            return true;
+
+        case TR_SCHED_TUES:
+            *tgt = TR_SCHED_TUES;
+            return true;
+
+        case TR_SCHED_WED:
+            *tgt = TR_SCHED_WED;
+            return true;
+
+        case TR_SCHED_THURS:
+            *tgt = TR_SCHED_THURS;
+            return true;
+
+        case TR_SCHED_FRI:
+            *tgt = TR_SCHED_FRI;
+            return true;
+
+        case TR_SCHED_SAT:
+            *tgt = TR_SCHED_SAT;
+            return true;
+
+        case TR_SCHED_WEEKDAY:
+            *tgt = TR_SCHED_WEEKDAY;
+            return true;
+
+        case TR_SCHED_WEEKEND:
+            *tgt = TR_SCHED_WEEKEND;
+            return true;
+
+        case TR_SCHED_ALL:
+            *tgt = TR_SCHED_ALL;
+            return true;
+
+        default:
+            tr_logAddWarn(fmt::format(fmt::runtime(_("Invalid tr_sched_days value {val}")), fmt::arg("val", *val)));
+            break;
+        }
+    }
+
+    return false;
+}
+
+tr_variant from_sched_day(tr_sched_day const& val)
+{
+    return val;
+}
+
+// ---
+
 bool to_msec(tr_variant const& src, std::chrono::milliseconds* tgt)
 {
     if (auto val = src.value_if<int64_t>())
@@ -257,7 +303,7 @@ tr_variant from_msec(std::chrono::milliseconds const& src)
 
 bool to_port(tr_variant const& src, tr_port* tgt)
 {
-    if (auto const val = src.value_if<int64_t>())
+    if (auto const val = src.value_if<uint16_t>())
     {
         *tgt = tr_port::from_host(*val);
         return true;
@@ -268,55 +314,53 @@ bool to_port(tr_variant const& src, tr_port* tgt)
 
 tr_variant from_port(tr_port const& val)
 {
-    return int64_t{ val.host() };
+    return val.host();
 }
 
 // ---
 
-auto constexpr PreallocationKeys = LookupTable<tr_open_files::Preallocation, 5U>{ {
-    { "off", tr_open_files::Preallocation::None },
-    { "none", tr_open_files::Preallocation::None },
-    { "fast", tr_open_files::Preallocation::Sparse },
-    { "sparse", tr_open_files::Preallocation::Sparse },
-    { "full", tr_open_files::Preallocation::Full },
+auto constexpr PreallocationKeys = LookupTable<tr_file_preallocation, 5U>{ {
+    { "off", tr_file_preallocation::None },
+    { "none", tr_file_preallocation::None },
+    { "fast", tr_file_preallocation::Sparse },
+    { "sparse", tr_file_preallocation::Sparse },
+    { "full", tr_file_preallocation::Full },
 } };
 
-bool to_preallocation_mode(tr_variant const& src, tr_open_files::Preallocation* tgt)
+bool to_preallocation_mode(tr_variant const& src, tr_file_preallocation* tgt)
 {
     return to_enum_or_integral_with_lookup(PreallocationKeys, src, tgt);
 }
 
-tr_variant from_preallocation_mode(tr_open_files::Preallocation const& val)
+tr_variant from_preallocation_mode(tr_file_preallocation const& val)
 {
     return static_cast<int64_t>(val);
 }
 
 // ---
 
-auto constexpr PreferredTransportKeys = LookupTable<tr_preferred_transport, TR_NUM_PREFERRED_TRANSPORT>{ {
-    { "utp", TR_PREFER_UTP },
-    { "tcp", TR_PREFER_TCP },
+auto constexpr PreferredTransportKeys = LookupTable<tr_preferred_transport, PreferredTransportCount>{ {
+    { "utp", tr_preferred_transport::UTP },
+    { "tcp", tr_preferred_transport::TCP },
 } };
 
-bool to_preferred_transport(
-    tr_variant const& src,
-    small::max_size_vector<tr_preferred_transport, TR_NUM_PREFERRED_TRANSPORT>* tgt)
+bool to_preferred_transport(tr_variant const& src, small::max_size_vector<tr_preferred_transport, PreferredTransportCount>* tgt)
 {
-    static auto constexpr LoadSingle = [](tr_variant const& var)
+    static auto constexpr LoadSingle = [](tr_variant const& var) -> std::optional<tr_preferred_transport>
     {
         auto tmp = tr_preferred_transport{};
-        return to_enum_or_integral_with_lookup(PreferredTransportKeys, var, &tmp) ? tmp : TR_NUM_PREFERRED_TRANSPORT;
+        return to_enum_or_integral_with_lookup(PreferredTransportKeys, var, &tmp) ? std::make_optional(tmp) : std::nullopt;
     };
 
     if (auto* const l = src.get_if<tr_variant::Vector>(); l != nullptr)
     {
-        auto tmp = small::max_size_unordered_set<tr_preferred_transport, TR_NUM_PREFERRED_TRANSPORT>{};
+        auto tmp = small::max_size_unordered_set<tr_preferred_transport, PreferredTransportCount>{};
         tmp.reserve(tmp.max_size());
 
         for (size_t i = 0, n = std::min(std::size(*l), tmp.max_size()); i < n; ++i)
         {
             auto const value = LoadSingle((*l)[i]);
-            if (value >= TR_NUM_PREFERRED_TRANSPORT || !tmp.insert(value).second)
+            if (!value || !tmp.insert(*value).second)
             {
                 return false;
             }
@@ -329,20 +373,20 @@ bool to_preferred_transport(
     }
 
     auto const preferred = LoadSingle(src);
-    if (preferred >= TR_NUM_PREFERRED_TRANSPORT)
+    if (!preferred)
     {
         return false;
     }
 
-    tgt->assign(1U, preferred);
+    tgt->assign(1U, *preferred);
     return true;
 }
 
-tr_variant from_preferred_transport(small::max_size_vector<tr_preferred_transport, TR_NUM_PREFERRED_TRANSPORT> const& val)
+tr_variant from_preferred_transport(small::max_size_vector<tr_preferred_transport, PreferredTransportCount> const& val)
 {
     static auto constexpr SaveSingle = [](tr_preferred_transport const ele) -> tr_variant
     {
-        return from_enum_or_integral_with_lookup(PreferredTransportKeys, ele);
+        return static_cast<int64_t>(ele);
     };
 
     auto ret = tr_variant::Vector{};
@@ -353,42 +397,6 @@ tr_variant from_preferred_transport(small::max_size_vector<tr_preferred_transpor
     }
 
     return ret;
-}
-
-// ---
-
-bool to_size_t(tr_variant const& src, size_t* tgt)
-{
-    if (auto const val = src.value_if<int64_t>())
-    {
-        *tgt = static_cast<size_t>(*val);
-        return true;
-    }
-
-    return false;
-}
-
-tr_variant from_size_t(size_t const& val)
-{
-    return uint64_t{ val };
-}
-
-// ---
-
-bool to_uint64(tr_variant const& src, uint64_t* tgt)
-{
-    if (auto const val = src.value_if<int64_t>())
-    {
-        *tgt = static_cast<uint64_t>(*val);
-        return true;
-    }
-
-    return false;
-}
-
-tr_variant from_uint64(uint64_t const& val)
-{
-    return val;
 }
 
 // ---
@@ -481,6 +489,59 @@ tr_variant from_verify_added_mode(tr_verify_added_mode const& val)
 {
     return from_enum_or_integral_with_lookup(VerifyModeKeys, val);
 }
+
+// ---
+
+bool to_pex(tr_variant const& src, tr_pex* tgt)
+{
+    auto* const map = src.get_if<tr_variant::Map>();
+    if (map == nullptr)
+    {
+        return false;
+    }
+
+    auto const sockaddr = map->value_if<std::string_view>(TR_KEY_socket_address);
+    if (!sockaddr)
+    {
+        return false;
+    }
+
+    auto pex = tr_pex{};
+    auto* const compact = reinterpret_cast<std::byte const*>(std::data(*sockaddr));
+    switch (std::size(*sockaddr))
+    {
+    case tr_socket_address::CompactSockAddrBytes[TR_AF_INET]:
+        pex.socket_address = tr_socket_address::from_compact_ipv4(compact).first;
+        break;
+
+    case tr_socket_address::CompactSockAddrBytes[TR_AF_INET6]:
+        pex.socket_address = tr_socket_address::from_compact_ipv6(compact).first;
+        break;
+
+    default:
+        return false;
+    }
+
+    pex.flags = static_cast<uint8_t>(map->value_if<int64_t>(TR_KEY_flags).value_or(0));
+
+    *tgt = std::move(pex);
+    return true;
+}
+
+tr_variant from_pex(tr_pex const& val)
+{
+    auto pex = tr_variant::Map{ 2U };
+
+    auto buf = std::array<char, tr_socket_address::CompactSockAddrMaxBytes>{};
+    auto* const buf_data = std::data(buf);
+    auto* const begin = reinterpret_cast<std::byte*>(buf_data);
+    auto const* const end = val.to_compact(begin);
+
+    pex.try_emplace(TR_KEY_socket_address, std::string_view{ buf_data, static_cast<size_t>(end - begin) });
+    pex.try_emplace(TR_KEY_flags, val.flags);
+
+    return pex;
+}
 } // unnamed namespace
 
 void Converters::ensure_default_converters()
@@ -494,17 +555,22 @@ void Converters::ensure_default_converters()
             Converters::add(to_diffserv_t, from_diffserv_t);
             Converters::add(to_double, from_double);
             Converters::add(to_encryption_mode, from_encryption_mode);
-            Converters::add(to_int, from_int);
-            Converters::add(to_int64, from_int64);
+            Converters::add(to_int<int>, from_int<int>);
+            Converters::add(to_int<int64_t>, from_int<int64_t>);
+            Converters::add(to_int<size_t>, from_int<size_t>);
+            Converters::add(to_int<time_t>, from_int<time_t>);
+            Converters::add(to_int<uint16_t>, from_int<uint16_t>);
+            Converters::add(to_int<uint32_t>, from_int<uint32_t>);
+            Converters::add(to_int<uint64_t>, from_int<uint64_t>);
             Converters::add(to_log_level, from_log_level);
             Converters::add(to_mode_t, from_mode_t);
             Converters::add(to_msec, from_msec);
+            Converters::add(to_pex, from_pex);
             Converters::add(to_port, from_port);
             Converters::add(to_preallocation_mode, from_preallocation_mode);
             Converters::add(to_preferred_transport, from_preferred_transport);
-            Converters::add(to_size_t, from_size_t);
+            Converters::add(to_sched_day, from_sched_day);
             Converters::add(to_string, from_string);
-            Converters::add(to_uint64, from_uint64);
             Converters::add(to_verify_added_mode, from_verify_added_mode);
         });
 }

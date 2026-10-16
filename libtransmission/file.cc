@@ -10,6 +10,10 @@
 #include <string_view>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 #include "libtransmission/error.h"
 #include "libtransmission/file.h"
 
@@ -22,6 +26,19 @@ void maybe_set_error(tr_error* error, std::error_code const& ec)
     {
         error->set(ec.value(), ec.message());
     }
+}
+
+// Construct std::filesystem::path from UTF-8 char sequence.
+// https://stackoverflow.com/a/57635139/11390656
+template<typename InputIt>
+[[nodiscard]] std::filesystem::path tr_u8path(InputIt begin, InputIt end)
+{
+    auto const view = std::ranges::subrange(begin, end) | std::views::transform([](char const c) -> char8_t { return c; });
+    return { view.begin(), view.end() };
+}
+[[nodiscard]] std::filesystem::path tr_u8path(std::string_view const path)
+{
+    return tr_u8path(path.begin(), path.end());
 }
 
 } // namespace
@@ -157,8 +174,12 @@ bool tr_sys_dir_create(std::string_view path, int flags, [[maybe_unused]] int pe
     auto const parents = (flags & TR_SYS_DIR_CREATE_PARENTS) != 0;
 
 #ifndef _WIN32
+    auto const umask = ::umask(0);
+    ::umask(umask);
+    auto const final_perms = static_cast<std::filesystem::perms>(permissions & ~umask);
+
     auto missing = std::vector<std::filesystem::path>{};
-    if (parents && permissions != 0)
+    if (parents && final_perms != std::filesystem::perms::none)
     {
         auto current = std::filesystem::path{};
         for (auto const& part : filesystem_path)
@@ -210,16 +231,12 @@ bool tr_sys_dir_create(std::string_view path, int flags, [[maybe_unused]] int pe
     }
 
 #ifndef _WIN32
-    if (permissions != 0)
+    if (final_perms != std::filesystem::perms::none)
     {
         auto const apply_permissions = [&](std::filesystem::path const& target)
         {
             auto perm_ec = std::error_code{};
-            std::filesystem::permissions(
-                target,
-                static_cast<std::filesystem::perms>(permissions),
-                std::filesystem::perm_options::replace,
-                perm_ec);
+            std::filesystem::permissions(target, final_perms, std::filesystem::perm_options::replace, perm_ec);
             if (perm_ec)
             {
                 maybe_set_error(error, perm_ec);
@@ -283,13 +300,13 @@ std::vector<std::string> tr_sys_dir_get_files(
     }
 }
 
-std::optional<std::filesystem::space_info> tr_sys_path_get_capacity(std::filesystem::path const& path, tr_error* error)
+std::optional<tr_sys_path_capacity> tr_sys_path_get_capacity(std::string_view const path, tr_error* error)
 {
     auto ec = std::error_code{};
-    auto space = std::filesystem::space(path, ec);
+    auto const space = std::filesystem::space(tr_u8path(path), ec);
     if (!ec)
     {
-        return space;
+        return tr_sys_path_capacity{ .available = space.available, .capacity = space.capacity };
     }
 
     maybe_set_error(error, ec);

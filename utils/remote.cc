@@ -25,14 +25,18 @@
 
 #include <fmt/chrono.h>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include <libtransmission/transmission.h>
 
 #include <libtransmission/api-compat.h>
 #include <libtransmission/crypto-utils.h>
+#include <libtransmission/env.h>
+#include <libtransmission/file-utils.h>
 #include <libtransmission/file.h>
 #include <libtransmission/quark.h>
 #include <libtransmission/rpcimpl.h>
+#include <libtransmission/string-utils.h>
 #include <libtransmission/tr-assert.h>
 #include <libtransmission/tr-getopt.h>
 #include <libtransmission/utils.h>
@@ -254,7 +258,7 @@ auto constexpr Options = std::array<tr_option, 106>{ {
     { 941, "info-peers", "List the current torrent(s)' peers", "ip", Arg::None, nullptr },
     { 942, "info-pieces", "List the current torrent(s)' pieces", "ic", Arg::None, nullptr },
     { 943, "info-trackers", "List the current torrent(s)' trackers", "it", Arg::None, nullptr },
-    { 'j', "json", "Return RPC response as a JSON string", "j", Arg::None, nullptr },
+    { 'j', "json", "Return RPC response as a JSON string if the request was not a notification", "j", Arg::None, nullptr },
     { 920, "session-info", "Show the session's details", "si", Arg::None, nullptr },
     { 921, "session-stats", "Show the session's statistics", "st", Arg::None, nullptr },
     { 'l', "list", "List all torrents", "l", Arg::None, nullptr },
@@ -1422,7 +1426,7 @@ void print_file_list(tr_variant::Map const& result)
 
 void print_peers_impl(tr_variant::Vector const& peers)
 {
-    fmt::print("{:<40s}  {:<12s}  {:<5s} {:<8s}  {:<8s}  {:s}\n", "Address", "Flags", "Done", "Down", "Up", "Client");
+    fmt::print("{:<40s}  {:<12s}  {:<5s} {:>8s}  {:>8s}  {:s}\n", "Address", "Flags", "Done", "Down", "Up", "Client");
 
     for (auto const& peer_var : peers)
     {
@@ -1852,9 +1856,11 @@ void print_session(tr_variant::Map const& result)
         fmt::print("  Port forwarding enabled: {:s}\n", *b ? "Yes" : "No");
     }
 
-    if (auto b = result.value_if<bool>(TR_KEY_utp_enabled))
+    if (auto const* const l = result.find_if<tr_variant::Vector>(TR_KEY_preferred_transports); l != nullptr &&
+        std::ranges::all_of(*l, [](tr_variant const& var) { return var.holds_alternative<std::string_view>(); }))
     {
-        fmt::print("  µTP enabled: {:s}\n", *b ? "Yes" : "No");
+        auto const view = std::views::transform(*l, [](tr_variant const& var) { return *var.value_if<std::string_view>(); });
+        fmt::print("  Transport protocol preference: {}\n", fmt::join(view, ", "));
     }
 
     if (auto b = result.value_if<bool>(TR_KEY_dht_enabled))
@@ -2352,7 +2358,7 @@ int process_response(char const* rpcurl, std::string_view const response, Remote
         [[fallthrough]];
 
     default:
-        fmt::print("{:s} responded: {:s}\n", rpcurl, response);
+        fmt::print("{:s} returned a successful response\n", rpcurl);
         break;
     }
 
@@ -2476,7 +2482,10 @@ int flush(char const* rpcurl, tr_variant* const var, RemoteConfig& config)
             break;
 
         case 204:
-            fmt::print("{:s} acknowledged request\n", rpcurl);
+            if (!config.json)
+            {
+                fmt::print("{:s} acknowledged notification\n", rpcurl);
+            }
             break;
 
         case 409:

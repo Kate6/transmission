@@ -11,6 +11,7 @@
 #include <ctime> // time_t
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -27,14 +28,15 @@
 
 #include <fmt/format.h>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/crypto-utils.h" // for tr_rand_obj()
 #include "libtransmission/log.h"
 #include "libtransmission/net.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/timer.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/tr-lpd.h"
+#include "libtransmission/tr-macros.h"
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h" // for tr_net_init()
 #include "libtransmission/utils-ev.h" // for tr_net_init()
 
@@ -248,7 +250,7 @@ public:
 
         for (auto const sock : mcast_sockets_)
         {
-            if (sock != TR_BAD_SOCKET)
+            if (is_valid_socket(sock))
             {
                 tr_net_close_socket(sock);
             }
@@ -266,11 +268,12 @@ private:
             auto const err = sockerrno;
             tr_net_close_socket(mcast_sockets_[TR_AF_INET]);
             mcast_sockets_[TR_AF_INET] = TR_BAD_SOCKET;
-            tr_logAddWarn(fmt::format(
-                fmt::runtime(_("Couldn't initialize {ip_protocol} LPD: {error} ({error_code})")),
-                fmt::arg("ip_protocol", tr_ip_protocol_to_sv(TR_AF_INET)),
-                fmt::arg("error", tr_strerror(err)),
-                fmt::arg("error_code", err)));
+            tr_logAddWarn(
+                fmt::format(
+                    fmt::runtime(_("Couldn't initialize {ip_protocol} LPD: {error} ({error_code})")),
+                    fmt::arg("ip_protocol", tr_ip_protocol_to_sv(TR_AF_INET)),
+                    fmt::arg("error", tr_strerror(err)),
+                    fmt::arg("error_code", err)));
             --n_success;
         }
 
@@ -279,11 +282,12 @@ private:
             auto const err = sockerrno;
             tr_net_close_socket(mcast_sockets_[TR_AF_INET6]);
             mcast_sockets_[TR_AF_INET6] = TR_BAD_SOCKET;
-            tr_logAddWarn(fmt::format(
-                fmt::runtime(_("Couldn't initialize {ip_protocol} LPD: {error} ({error_code})")),
-                fmt::arg("ip_protocol", tr_ip_protocol_to_sv(TR_AF_INET6)),
-                fmt::arg("error", tr_strerror(err)),
-                fmt::arg("error_code", err)));
+            tr_logAddWarn(
+                fmt::format(
+                    fmt::runtime(_("Couldn't initialize {ip_protocol} LPD: {error} ({error_code})")),
+                    fmt::arg("ip_protocol", tr_ip_protocol_to_sv(TR_AF_INET6)),
+                    fmt::arg("error", tr_strerror(err)),
+                    fmt::arg("error_code", err)));
             --n_success;
         }
 
@@ -310,11 +314,14 @@ private:
         // setup datagram socket
         sock = socket(tr_ip_protocol_to_af(ip_protocol), SOCK_DGRAM, 0);
 
-        setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
-
-        if (sock == TR_BAD_SOCKET)
+        if (!is_valid_socket(sock))
         {
             return false;
+        }
+
+        if (bindInterface != nullptr && *bindInterface != '\0')
+        {
+            (void)setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
         }
 
         if (evutil_make_socket_nonblocking(sock) == -1)
@@ -546,8 +553,7 @@ private:
             return info.allows_lpd && (info.activity == TR_STATUS_DOWNLOAD || info.activity == TR_STATUS_SEED) &&
                 info.announce_after < now;
         };
-        auto const remove_it = std::remove_if(std::begin(torrents), std::end(torrents), std::not_fn(needs_announce));
-        torrents.erase(remove_it, std::end(torrents));
+        std::erase_if(torrents, std::not_fn(needs_announce));
 
         if (std::empty(torrents))
         {
@@ -568,7 +574,7 @@ private:
             }
             return false;
         };
-        std::sort(std::begin(torrents), std::end(torrents), TorrentComparator);
+        std::ranges::sort(torrents, TorrentComparator);
 
         auto const next_announce_after = now + TorrentAnnounceIntervalSec;
         for (ipp_t ipp = 0; ipp < NUM_TR_AF_INET_TYPES; ++ipp)
@@ -576,6 +582,7 @@ private:
             auto const ip_protocol = static_cast<tr_address_type>(ipp);
 
             // cram in as many as will fit in a message
+            using diff_type = std::ranges::range_difference_t<decltype(torrents)>;
             auto const baseline_size = std::size(makeAnnounceMsg(ip_protocol, cookie_, mediator_.port(), {}));
             auto const size_with_one = std::size(
                 makeAnnounceMsg(ip_protocol, cookie_, mediator_.port(), { torrents.front().info_hash_str }));
@@ -584,9 +591,8 @@ private:
             auto const torrents_this_announce = std::min(std::size(torrents), max_torrents_per_announce);
             auto info_hash_strings = std::vector<std::string_view>{};
             info_hash_strings.reserve(torrents_this_announce);
-            std::transform(
-                std::begin(torrents),
-                std::begin(torrents) + torrents_this_announce,
+            std::ranges::transform(
+                std::views::take(torrents, static_cast<diff_type>(torrents_this_announce)),
                 std::back_inserter(info_hash_strings),
                 [](auto const& tor) { return tor.info_hash_str; });
 
@@ -606,10 +612,11 @@ private:
     {
         if (messages_received_since_upkeep_ > MaxIncomingPerUpkeep)
         {
-            tr_logAddTrace(fmt::format(
-                "Dropped {} announces in the last interval (max. {} allowed)",
-                messages_received_since_upkeep_ - MaxIncomingPerUpkeep,
-                MaxIncomingPerUpkeep));
+            tr_logAddTrace(
+                fmt::format(
+                    "Dropped {} announces in the last interval (max. {} allowed)",
+                    messages_received_since_upkeep_ - MaxIncomingPerUpkeep,
+                    MaxIncomingPerUpkeep));
         }
 
         messages_received_since_upkeep_ = 0;
@@ -632,7 +639,7 @@ private:
             return false;
         }
 
-        if (mcast_sockets_[ip_protocol] == TR_BAD_SOCKET)
+        if (!is_valid_socket(mcast_sockets_[ip_protocol]))
         {
             return true;
         }
@@ -642,12 +649,12 @@ private:
         auto const res = sendto(
             mcast_sockets_[ip_protocol],
             std::data(announce),
-            std::size(announce),
+            static_cast<TR_IF_WIN32(int, size_t)>(std::size(announce)),
             0,
             ip_protocol == TR_AF_INET ? reinterpret_cast<sockaddr const*>(&mcast_addr_) :
                                         reinterpret_cast<sockaddr const*>(&mcast6_addr_),
             ip_protocol == TR_AF_INET ? sizeof(mcast_addr_) : sizeof(mcast6_addr_));
-        return res == static_cast<int>(std::size(announce));
+        return std::cmp_equal(res, std::size(announce));
     }
 
     std::string const cookie_ = makeCookie();

@@ -18,13 +18,16 @@
 
 #include <fmt/format.h>
 
-#include "libtransmission/transmission.h"
+#include <small/map.hpp>
 
 #include "libtransmission/error.h"
+#include "libtransmission/file-utils.h"
 #include "libtransmission/file.h"
 #include "libtransmission/log.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/torrent-files.h"
 #include "libtransmission/tr-strbuf.h"
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h"
 
 using namespace std::literals;
@@ -154,6 +157,31 @@ bool tr_torrent_files::has_any_local_data(std::string_view const* paths, size_t 
     }
 
     return false;
+}
+
+std::string_view tr_torrent_files::primary_mime_type() const
+{
+    // count up how many bytes there are for each mime-type in the torrent
+    auto size_per_mime_type = small::unordered_map<std::string_view, size_t, 256U>{};
+    for (tr_file_index_t i = 0, n = file_count(); i < n; ++i)
+    {
+        auto const mime_type = tr_get_mime_type_for_filename(path(i));
+        size_per_mime_type[mime_type] += file_size(i);
+    }
+
+    if (std::empty(size_per_mime_type))
+    {
+        // https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types
+        // application/octet-stream is the default value for all other cases.
+        // An unknown file type should use this type.
+        auto constexpr Fallback = "application/octet-stream"sv;
+        return Fallback;
+    }
+
+    auto const it = std::ranges::max_element(
+        size_per_mime_type,
+        [](auto const& a, auto const& b) { return a.second < b.second; });
+    return it->first;
 }
 
 // ---
@@ -360,13 +388,13 @@ namespace
     // Shortcut to avoid extra work below.
     // All the paths below involve filenames that begin with one of these chars
     static auto constexpr ReservedFilesBeginWithOneOf = "ACLNP"sv;
-    if (ReservedFilesBeginWithOneOf.find(toupper(in.front())) == std::string_view::npos)
+    if (ReservedFilesBeginWithOneOf.find(static_cast<char>(toupper(in.front()))) == std::string_view::npos)
     {
         return false;
     }
 
     auto in_upper = tr_pathbuf{ in };
-    std::ranges::for_each(in_upper, [](auto& ch) { ch = toupper(ch); });
+    std::ranges::for_each(in_upper, [](auto& ch) { ch = static_cast<char>(toupper(ch)); });
     auto const in_upper_sv = in_upper.sv();
 
     static auto constexpr ReservedNames = std::array<std::string_view, 22>{
@@ -404,9 +432,10 @@ namespace
 
 // `is_unix_reserved_char` and `is_win32_reserved_char` kept as `maybe_unused`
 // for potential support of different filesystems on the same OS
-[[nodiscard, maybe_unused]] auto constexpr is_unix_reserved_char(unsigned char ch) noexcept
+[[nodiscard, maybe_unused]] auto constexpr is_unix_reserved_char([[maybe_unused]] unsigned char ch) noexcept
 {
-    return ch == '/';
+    // TODO: keep this here for future uses
+    return false;
 }
 
 // https://docs.microsoft.com/en-us/windows/desktop/FileIO/naming-a-file
@@ -419,7 +448,6 @@ namespace
     {
     case '"':
     case '*':
-    case '/':
     case ':':
     case '<':
     case '>':
@@ -428,12 +456,17 @@ namespace
     case '|':
         return true;
     default:
-        return ch <= 31;
+        return false;
     }
 }
 
 [[nodiscard]] auto constexpr is_reserved_char(unsigned char ch, bool os_specific) noexcept
 {
+    if (ch <= 31 || ch == '/')
+    {
+        return true;
+    }
+
     if (!os_specific)
     {
         return is_unix_reserved_char(ch) || is_win32_reserved_char(ch);

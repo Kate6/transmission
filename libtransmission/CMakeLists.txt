@@ -28,23 +28,29 @@ target_sources(${TR_NAME}
         announcer-udp.cc
         announcer.cc
         announcer.h
+        local-data.cc
+        local-data.h
         api-compat.cc
         api-compat.h
         bandwidth.cc
         bandwidth.h
         benc.h
+        bep55-holepunch.cc
+        bep55-holepunch.h
+        bep55-introducer-store.h
         bitfield.cc
         bitfield.h
         block-info.cc
         block-info.h
         blocklist.cc
         blocklist.h
-        cache.cc
-        cache.h
         clients.cc
         clients.h
         completion.cc
         completion.h
+        config-dir-lock.cc
+        config-dir-lock.h
+        constants.h
         crypto-utils-ccrypto.cc
         crypto-utils-fallback.cc
         crypto-utils-mbedtls.cc
@@ -55,9 +61,13 @@ target_sources(${TR_NAME}
         error-types.h
         error.cc
         error.h
+        env.cc
+        env.h
         file-piece-map.cc
         file-piece-map.h
         file-posix.cc
+        file-utils.cc
+        file-utils.h
         file-win32.cc
         file.cc
         file.h
@@ -91,6 +101,10 @@ target_sources(${TR_NAME}
         peer-mse.h
         peer-msgs.cc
         peer-msgs.h
+        peer-socket-tcp.cc
+        peer-socket-tcp.h
+        peer-socket-utp.cc
+        peer-socket-utp.h
         peer-socket.cc
         peer-socket.h
         platform.cc
@@ -115,12 +129,16 @@ target_sources(${TR_NAME}
         session-alt-speeds.h
         session-id.cc
         session-id.h
+        session-settings.h
         session-thread.cc
         session-thread.h
         session.cc
         session.h
         stats.cc
         stats.h
+        string-utils.cc
+        string-utils.h
+        $<$<BOOL:${IS_APPLE_CLANG}>:string-utils.mm>
         subprocess-posix.cc
         subprocess-win32.cc
         subprocess.h
@@ -156,11 +174,11 @@ target_sources(${TR_NAME}
         tr-utp.cc
         tr-utp.h
         transmission.h
+        types.h
         utils-ev.cc
         utils-ev.h
         utils.cc
         utils.h
-        $<$<BOOL:${IS_APPLE_CLANG}>:utils.mm>
         variant-benc.cc
         variant-json.cc
         variant.cc
@@ -275,7 +293,7 @@ target_link_libraries(${TR_NAME}
         utf8::cpp
         wildmat
         transmission::WideInteger
-        Crc32c::crc32c
+        MadlerCrcany
         $<$<BOOL:${WIN32}>:crypt32>
         $<$<BOOL:${WIN32}>:shlwapi>
         "$<$<BOOL:${APPLE}>:-framework Foundation>"

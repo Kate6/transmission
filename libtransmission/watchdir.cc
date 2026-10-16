@@ -65,7 +65,7 @@ namespace impl
 
 void BaseWatchdir::processFile(std::string_view basename)
 {
-    if (!isRegularFile(dirname_, basename) || handled_.count(basename) != 0)
+    if (!isRegularFile(dirname_, basename) || handled_.contains(basename))
     {
         return;
     }

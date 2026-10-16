@@ -21,6 +21,7 @@
 #include <glibmm/variant.h>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include <map>
 #include <utility>
@@ -208,8 +209,14 @@ void gtr_notify_torrent_completed(Glib::RefPtr<Session> const& core, tr_torrent_
         {
             Glib::spawn_async({}, argv, TR_GLIB_SPAWN_FLAGS(SEARCH_PATH));
         }
-        catch (Glib::SpawnError const&)
+        catch (Glib::SpawnError const& e)
         {
+            gtr_warning(
+                fmt::format(
+                    fmt::runtime(_("Couldn't spawn async process \"'{command}'\": {error} ({error_code})")),
+                    fmt::arg("command", fmt::join(argv, "' '")),
+                    fmt::arg("error", e.what()),
+                    fmt::arg("error_code", static_cast<int>(e.code()))));
         }
     }
 
@@ -222,7 +229,7 @@ void gtr_notify_torrent_completed(Glib::RefPtr<Session> const& core, tr_torrent_
 
     auto const* const tor = core->find_torrent(tor_id);
 
-    auto const n = TrNotification{ core, tor_id };
+    auto const n = TrNotification{ .core = core, .torrent_id = tor_id };
 
     std::vector<Glib::ustring> actions;
     if (server_supports_actions)
@@ -274,7 +281,7 @@ void gtr_notify_torrent_added(Glib::RefPtr<Session> const& core, tr_torrent_id_t
         actions.emplace_back(_("Start Now"));
     }
 
-    auto const n = TrNotification{ core, tor_id };
+    auto const n = TrNotification{ .core = core, .torrent_id = tor_id };
 
     proxy->call(
         "Notify",

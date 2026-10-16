@@ -13,18 +13,18 @@
 
 #include <fmt/format.h>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/benc.h"
 #include "libtransmission/crypto-utils.h"
 #include "libtransmission/error.h"
+#include "libtransmission/file-utils.h"
 #include "libtransmission/file.h"
 #include "libtransmission/log.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/torrent-files.h"
 #include "libtransmission/torrent-metainfo.h"
 #include "libtransmission/tr-assert.h"
-#include "libtransmission/tr-macros.h"
 #include "libtransmission/tr-strbuf.h"
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h"
 
 using namespace std::literals;
@@ -68,7 +68,6 @@ struct MetainfoHandler final : public tr::benc::BasicHandler<MaxBencDepth>
     std::string_view info_dict_begin_;
     tr_tracker_tier_t tier_ = 0;
     tr_pathbuf file_subpath_;
-    std::string_view pieces_root_;
     int64_t file_length_ = 0;
 
     enum class State : uint8_t
@@ -93,6 +92,7 @@ struct MetainfoHandler final : public tr::benc::BasicHandler<MaxBencDepth>
 
     bool StartDict(Context const& context) override
     {
+        // TODO Bittorrent v2. For now just parse and throw away.
         if (state_ == State::FileTree)
         {
             auto const path_element = currentKey();
@@ -105,7 +105,7 @@ struct MetainfoHandler final : public tr::benc::BasicHandler<MaxBencDepth>
             {
                 file_subpath_ += '/';
             }
-            tr_torrent_files::sanitize_subpath(*path_element, file_subpath_);
+            tr_torrent_files::sanitize_subpath(tr_strv_to_utf8_string(*path_element), file_subpath_);
         }
         else if (pathIs(InfoKey))
         {
@@ -290,8 +290,8 @@ struct MetainfoHandler final : public tr::benc::BasicHandler<MaxBencDepth>
         {
             if (current_key == AttrKey || current_key == PiecesRootKey)
             {
-                // currently unused. TODO support for bittorrent v2
-                // TODO https://github.com/transmission/transmission/issues/458
+                // currently unused. TODO support for BEP0047
+                // TODO https://github.com/transmission/transmission/issues/3387
             }
             else
             {
@@ -306,12 +306,13 @@ struct MetainfoHandler final : public tr::benc::BasicHandler<MaxBencDepth>
                 {
                     file_subpath_ += '/';
                 }
-                tr_torrent_files::sanitize_subpath(value, file_subpath_);
+                // BEP-3 says strings are UTF-8, so mask non-conformant path strings
+                tr_torrent_files::sanitize_subpath(tr_strv_to_utf8_string(value), file_subpath_);
             }
             else if (current_key == AttrKey)
             {
-                // currently unused. TODO support for bittorrent v2
-                // TODO https://github.com/transmission/transmission/issues/458
+                // currently unused. TODO support for BEP0047
+                // TODO https://github.com/transmission/transmission/issues/3387
             }
             else if (
                 pathIs(InfoKey, FilesKey, ArrayKey, Crc32Key) || //
@@ -366,17 +367,22 @@ struct MetainfoHandler final : public tr::benc::BasicHandler<MaxBencDepth>
         }
         else if (pathIs(InfoKey, PiecesKey))
         {
-            if (std::size(value) % sizeof(tr_sha1_digest_t) == 0)
+            if (tm_.has_v1_metadata())
             {
-                auto const n = std::size(value) / sizeof(tr_sha1_digest_t);
-                tm_.pieces_.resize(n);
-                std::copy_n(std::data(value), std::size(value), reinterpret_cast<char*>(std::data(tm_.pieces_)));
+                context.error.set(EINVAL, "invalid duplicate 'pieces'");
+                return false;
             }
-            else
+
+            static auto constexpr Sha1Len = std::tuple_size_v<tr_sha1_digest_t>;
+            auto const len = std::size(value);
+            if (len % Sha1Len != 0U)
             {
-                context.error.set(EINVAL, fmt::format("invalid piece size: {}", std::size(value)));
-                unhandled = true;
+                context.error.set(EINVAL, fmt::format("invalid 'pieces' size: {}", len));
+                return false;
             }
+
+            tm_.pieces_.resize(len / Sha1Len);
+            std::copy_n(std::data(value), len, reinterpret_cast<char*>(std::data(tm_.pieces_)));
         }
         else if (pathStartsWith(PieceLayersKey))
         {
@@ -454,8 +460,6 @@ private:
     {
         bool ok = true;
 
-        // FIXME: Check to see if we already added this file. This is a safeguard
-        // for hybrid torrents with duplicate info between "file tree" and "files"
         if (std::empty(file_subpath_))
         {
             context.error.set(EINVAL, fmt::format("invalid path [{:s}]", file_subpath_));
@@ -467,7 +471,6 @@ private:
         }
 
         file_length_ = 0;
-        pieces_root_ = {};
         // NB: let caller decide how to clear file_tree_.
         // if we're in "files" mode we clear it; if in "file tree" we pop it
         return ok;
@@ -478,6 +481,24 @@ private:
         if (std::empty(info_dict_begin_))
         {
             context.error.set(EINVAL, "no info_dict found");
+            return false;
+        }
+
+        if (!tm_.has_v1_metadata())
+        {
+            context.error.set(EINVAL, "missing v1 metadata");
+            return false;
+        }
+
+        // FIXME: update for hybrid torrents with duplicate info between "file tree" and "files"
+        // when "file tree" (bittorrent v2) supported
+        auto sorted_paths = tm_.files_.sorted_by_path();
+        if (auto dupe = std::ranges::adjacent_find(
+                sorted_paths,
+                [](auto const& p1, auto const& p2) { return p1.first == p2.first; });
+            dupe != sorted_paths.end())
+        {
+            context.error.set(EINVAL, fmt::format("duplicate path [{:s}]", dupe->first));
             return false;
         }
 
@@ -509,11 +530,10 @@ private:
         // bittorrent 1.0 spec
         // https://www.bittorrent.org/beps/bep_0003.html
         //
-        // "There is also a key length or a key files, but not both or neither.
-        //
-        // "If length is present then the download represents a single file,
+        // "There is also a key 'length' or a key 'files', but not both or neither.
+        // If 'length' is present then the download represents a single file,
         // otherwise it represents a set of files which go in a directory structure.
-        // In the single file case, length maps to the length of the file in bytes.
+        // In the single file case, 'length' maps to the length of the file in bytes."
         if (tm_.file_count() == 0 && length_ != 0 && !std::empty(tm_.name_))
         {
             tm_.files_.add(tr_torrent_files::sanitize_subpath(tm_.name_), length_);
@@ -535,12 +555,26 @@ private:
             {
                 if (!context.error)
                 {
-                    context.error.set(EINVAL, fmt::format("invalid piece size: {}", piece_size_));
+                    context.error.set(EINVAL, fmt::format("invalid 'piece length': {}", piece_size_));
                 }
                 return false;
             }
 
             tm_.block_info_ = tr_block_info{ tm_.files_.total_size(), piece_size_ };
+            if (tm_.block_info_.piece_count() != std::size(tm_.pieces_))
+            {
+                if (!context.error)
+                {
+                    context.error.set(
+                        EINVAL,
+                        fmt::format(
+                            "'pieces' and torrent size mismatch: {}, {}",
+                            tm_.block_info_.piece_count(),
+                            std::size(tm_.pieces_)));
+                }
+                return false;
+            }
+
             return true;
         }
 
@@ -618,6 +652,10 @@ private:
 
 bool tr_torrent_metainfo::parse_benc(std::string_view benc, tr_error* error)
 {
+    // Reset the object to avoid accidentally failing checks
+    // because of the old data
+    *this = tr_torrent_metainfo{};
+
     auto stack = tr::benc::ParserStack<MaxBencDepth>{};
     auto handler = MetainfoHandler{ *this };
 

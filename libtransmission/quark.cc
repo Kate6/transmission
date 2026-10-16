@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "libtransmission/quark.h"
+#include "libtransmission/string-utils.h"
+#include "libtransmission/tr-assert.h"
 
 using namespace std::literals;
 
@@ -144,6 +146,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "downloadLimit"sv, // rpc
     "downloadLimited"sv, // rpc
     "downloadSpeed"sv, // rpc
+    "download_bytes_per_second"sv, // rpc
     "download_count"sv, // rpc
     "download_dir"sv, // daemon, gtk app, rpc, tr_session::Settings
     "download_dir_free_space"sv, // rpc
@@ -210,6 +213,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "fromTracker"sv, // rpc
     "from_cache"sv, // rpc
     "from_dht"sv, // rpc
+    "from_holepunch"sv, // rpc
     "from_incoming"sv, // rpc
     "from_lpd"sv, // rpc
     "from_ltep"sv, // rpc
@@ -252,6 +256,8 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "info"sv, // .torrent
     "inhibit-desktop-hibernation"sv, // gtk app, qt app
     "inhibit_desktop_hibernation"sv, // gtk app, qt app
+    "ip_endpoints_ipv4"sv, // tr_session::Settings
+    "ip_endpoints_ipv6"sv, // tr_session::Settings
     "ip_protocol"sv, // rpc
     "ipv4"sv, // BEP0010; BT protocol, rpc
     "ipv6"sv, // BEP0010; BT protocol, rpc
@@ -265,6 +271,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "isUTP"sv, // rpc
     "isUploadingTo"sv, // rpc
     "is_backup"sv, // rpc
+    "is_downloading"sv, // rpc
     "is_downloading_from"sv, // rpc
     "is_encrypted"sv, // rpc
     "is_finished"sv, // rpc
@@ -451,11 +458,11 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "rate_to_client"sv, // rpc
     "rate_to_peer"sv, // rpc
     "rate_upload"sv, // rpc
-    "ratio-limit"sv, // .resume, daemon, gtk app, tr_session::Settings
-    "ratio-limit-enabled"sv, // daemon, tr_session::Settings
+    "ratio-limit"sv, // APICOMPAT
+    "ratio-limit-enabled"sv, // APICOMPAT
     "ratio-mode"sv, // .resume
-    "ratio_limit"sv, // .resume, daemon, gtk app, tr_session::Settings
-    "ratio_limit_enabled"sv, // daemon, tr_session::Settings
+    "ratio_limit"sv, // APICOMPAT
+    "ratio_limit_enabled"sv, // APICOMPAT
     "ratio_mode"sv, // .resume
     "read-clipboard"sv, // qt app
     "read_clipboard"sv, // qt app
@@ -548,8 +555,8 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "seed_idle_mode"sv, // rpc
     "seed_queue_enabled"sv, // rpc, tr_session::Settings
     "seed_queue_size"sv, // rpc, tr_session::Settings
-    "seed_ratio_limit"sv, // rpc
-    "seed_ratio_limited"sv, // rpc
+    "seed_ratio_limit"sv, // .resume, rpc, tr_session::Settings
+    "seed_ratio_limited"sv, // rpc, tr_session::Settings
     "seed_ratio_mode"sv, // rpc
     "seederCount"sv, // rpc
     "seeder_count"sv, // rpc
@@ -626,6 +633,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "status"sv, // rpc
     "statusbar-stats"sv, // gtk app, qt app
     "statusbar_stats"sv, // gtk app, qt app
+    "supports_holepunch"sv, // rpc
     "tag"sv, // rpc
     "tcp-enabled"sv, // rpc, tr_session::Settings
     "tcp_enabled"sv, // rpc, tr_session::Settings
@@ -710,6 +718,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "uploadedEver"sv, // rpc
     "uploaded_bytes"sv, // rpc, stats.json
     "uploaded_ever"sv, // rpc
+    "url"sv, // rpc
     "url-list"sv, // .torrent
     "use-global-speed-limit"sv, // .resume
     "use-speed-limit"sv, // .resume
@@ -731,6 +740,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "watch_dir_force_generic"sv, // daemon
     "webseeds"sv, // rpc
     "webseedsSendingToUs"sv, // rpc
+    "webseeds_ex"sv, // rpc
     "webseeds_sending_to_us"sv, // rpc
     "yourip"sv, // BEP0010; BT protocol
 };
@@ -779,15 +789,16 @@ std::optional<tr_quark> tr_quark_lookup(std::string_view key)
 
 tr_quark tr_quark_new(std::string_view str)
 {
-    if (auto const prior = tr_quark_lookup(str); prior)
+    auto const utf8 = tr_strv_to_utf8_string(str);
+    if (auto const prior = tr_quark_lookup(utf8); prior)
     {
         return *prior;
     }
 
     auto const ret = TR_N_KEYS + std::size(my_runtime);
-    auto const len = std::size(str);
+    auto const len = std::size(utf8);
     auto* perma = new char[len + 1];
-    std::copy_n(std::begin(str), len, perma);
+    std::copy_n(std::begin(utf8), len, perma);
     perma[len] = '\0';
     my_runtime.emplace_back(perma);
     return ret;
@@ -795,5 +806,6 @@ tr_quark tr_quark_new(std::string_view str)
 
 std::string_view tr_quark_get_string_view(tr_quark q)
 {
+    TR_ASSERT(q < TR_N_KEYS + std::size(my_runtime));
     return q < TR_N_KEYS ? MyStatic[q] : my_runtime[q - TR_N_KEYS];
 }

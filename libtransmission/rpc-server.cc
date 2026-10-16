@@ -34,10 +34,9 @@
 
 #include <libdeflate.h>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/crypto-utils.h" /* tr_ssha1_matches() */
 #include "libtransmission/error.h"
+#include "libtransmission/file-utils.h"
 #include "libtransmission/log.h"
 #include "libtransmission/net.h"
 #include "libtransmission/platform.h" /* tr_getWebClientDir() */
@@ -45,9 +44,10 @@
 #include "libtransmission/rpc-server.h"
 #include "libtransmission/rpcimpl.h"
 #include "libtransmission/session.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/timer.h"
 #include "libtransmission/tr-strbuf.h"
-#include "libtransmission/utils.h"
+#include "libtransmission/types.h"
 #include "libtransmission/variant.h"
 #include "libtransmission/web-utils.h"
 
@@ -101,10 +101,11 @@ public:
 
         if (std::size(src) >= TrUnixAddrStrLen)
         {
-            tr_logAddError(fmt::format(
-                fmt::runtime(_("Unix socket path must be fewer than {count} characters (including '{prefix}' prefix)")),
-                fmt::arg("count", TrUnixAddrStrLen - 1),
-                fmt::arg("prefix", TrUnixSocketPrefix)));
+            tr_logAddError(
+                fmt::format(
+                    fmt::runtime(_("Unix socket path must be fewer than {count} characters (including '{prefix}' prefix)")),
+                    fmt::arg("count", TrUnixAddrStrLen - 1),
+                    fmt::arg("prefix", TrUnixSocketPrefix)));
             return false;
         }
         unix_socket_path_ = src;
@@ -176,7 +177,15 @@ namespace
 {
 int constexpr DeflateLevel = 6; // medium / default
 
-// ---
+// Prevent clickjacking on the browser-facing WebUI and RPC responses.
+// https://github.com/transmission/transmission/issues/8726
+// https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html.
+void add_clickjacking_prevention_headers(struct evkeyvalq* headers)
+{
+    // Send X-Frame-Options for older browsers + CSP frame-ancestors for newer ones
+    evhttp_add_header(headers, "X-Frame-Options", "SAMEORIGIN");
+    evhttp_add_header(headers, "Content-Security-Policy", "frame-ancestors 'self'");
+}
 
 void send_simple_response(struct evhttp_request* req, int code, char const* text = nullptr)
 {
@@ -238,7 +247,7 @@ void send_simple_response(struct evhttp_request* req, int code, char const* text
         auto const max_compressed_len = libdeflate_deflate_compress_bound(server->compressor.get(), std::size(content));
 
         auto iov = evbuffer_iovec{};
-        evbuffer_reserve_space(out, std::max(std::size(content), max_compressed_len), &iov, 1);
+        evbuffer_reserve_space(out, static_cast<ev_ssize_t>(std::max(std::size(content), max_compressed_len)), &iov, 1);
 
         auto const compressed_len = libdeflate_gzip_compress(
             server->compressor.get(),
@@ -348,9 +357,10 @@ void handle_web_client(struct evhttp_request* req, tr_rpc_server const* server)
 #endif
             auto remote_port = ev_uint16_t{};
             evhttp_connection_get_peer(con, &remote_host, &remote_port);
-            tr_logAddWarn(fmt::format(
-                fmt::runtime(_("Rejected request from {host} (possible directory traversal attack)")),
-                fmt::arg("host", remote_host)));
+            tr_logAddWarn(
+                fmt::format(
+                    fmt::runtime(_("Rejected request from {host} (possible directory traversal attack)")),
+                    fmt::arg("host", remote_host)));
         }
         send_simple_response(req, HTTP_NOTFOUND);
     }
@@ -530,12 +540,14 @@ void handle_request(struct evhttp_request* req, void* arg)
 
     auto* const output_headers = evhttp_request_get_output_headers(req);
     evhttp_add_header(output_headers, "Server", MY_REALM);
+    add_clickjacking_prevention_headers(output_headers);
 
     if (server->is_anti_brute_force_enabled() && server->login_attempts_ >= server->settings().anti_brute_force_limit)
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Rejected request from {host} (brute force protection active)")),
-            fmt::arg("host", remote_host)));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Rejected request from {host} (brute force protection active)")),
+                fmt::arg("host", remote_host)));
         send_simple_response(req, HttpErrorForbidden);
         return;
     }
@@ -565,9 +577,10 @@ void handle_request(struct evhttp_request* req, void* arg)
 
     if (!is_authorized(server, evhttp_find_header(input_headers, "Authorization")))
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Rejected request from {host} (failed authentication)")),
-            fmt::arg("host", remote_host)));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Rejected request from {host} (failed authentication)")),
+                fmt::arg("host", remote_host)));
         evhttp_add_header(output_headers, "WWW-Authenticate", "Basic realm=\"" MY_REALM "\"");
         if (server->is_anti_brute_force_enabled())
         {
@@ -586,7 +599,7 @@ void handle_request(struct evhttp_request* req, void* arg)
     auto const rpc_base_path = tr_urlbuf{ base_path, TrHttpServerRpcRelativePath };
     auto const deprecated_web_path = tr_urlbuf{ base_path, "web" /*no trailing slash*/ };
 
-    char const* const uri = evhttp_request_get_uri(req);
+    auto const uri = std::string_view{ evhttp_request_get_uri(req) };
 
     if (!tr_strv_starts_with(uri, base_path) || uri == deprecated_web_path)
     {
@@ -613,6 +626,18 @@ void handle_request(struct evhttp_request* req, void* arg)
         tr_logAddWarn(
             fmt::format(fmt::runtime(_("Rejected request from {host} (Host not whitelisted)")), fmt::arg("host", remote_host)));
         send_simple_response(req, 421, Body);
+    }
+    else if (
+        !uri.starts_with(rpc_base_path.sv()) ||
+        (uri.size() != rpc_base_path.size() && uri.substr(rpc_base_path.size()) != "/"sv))
+    {
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Unknown URI from {host}: '{uri}'")),
+                fmt::arg("host", remote_host),
+                fmt::arg("uri", uri)));
+        // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
+        send_simple_response(req, HTTP_NOTFOUND, uri.data());
     }
 #ifdef REQUIRE_SESSION_ID
     else if (!test_session_id(server, req))
@@ -641,17 +666,9 @@ void handle_request(struct evhttp_request* req, void* arg)
         send_simple_response(req, 409, body.c_str());
     }
 #endif
-    else if (tr_strv_starts_with(uri, rpc_base_path))
-    {
-        handle_rpc(req, server);
-    }
     else
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Unknown URI from {host}: '{uri}'")),
-            fmt::arg("host", remote_host),
-            fmt::arg("uri", uri)));
-        send_simple_response(req, HTTP_NOTFOUND, uri);
+        handle_rpc(req, server);
     }
 }
 
@@ -666,9 +683,10 @@ bool bindUnixSocket(
     [[maybe_unused]] tr_mode_t socket_mode)
 {
 #ifdef _WIN32
-    tr_logAddError(fmt::format(
-        _("Unix sockets are unsupported on Windows. Please change '{key}' in your settings."),
-        fmt::arg("key", tr_quark_get_string_view(TR_KEY_rpc_bind_address))));
+    tr_logAddError(
+        fmt::format(
+            _("Unix sockets are unsupported on Windows. Please change '{key}' in your settings."),
+            fmt::arg("key", tr_quark_get_string_view(TR_KEY_rpc_bind_address))));
     return false;
 #else
     auto addr = sockaddr_un{};
@@ -693,9 +711,10 @@ bool bindUnixSocket(
 
     if (chmod(addr.sun_path, socket_mode) != 0)
     {
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_("Couldn't set RPC socket mode to {mode:#o}, defaulting to 0755")),
-            fmt::arg("mode", socket_mode)));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_("Couldn't set RPC socket mode to {mode:#o}, defaulting to 0755")),
+                fmt::arg("mode", socket_mode)));
     }
 
     return evhttp_bind_listener(httpd, lev) != nullptr;
@@ -739,14 +758,14 @@ int tr_evhttp_bind_socket(struct evhttp* httpd, char const* address, ev_uint16_t
         return evhttp_bind_socket(httpd, address, port);
     }
 
-    int const fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (fd == INVALID_SOCKET)
+    auto const fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (!is_valid_socket(fd))
     {
         freeaddrinfo(result);
         return evhttp_bind_socket(httpd, address, port);
     }
-    evutil_make_socket_nonblocking(fd);
-    evutil_make_listen_socket_reuseable(fd);
+    evutil_make_socket_nonblocking(static_cast<evutil_socket_t>(fd));
+    evutil_make_listen_socket_reuseable(static_cast<evutil_socket_t>(fd));
 
     // Making dual stack
     if (result->ai_family == AF_INET6)
@@ -757,13 +776,13 @@ int tr_evhttp_bind_socket(struct evhttp* httpd, char const* address, ev_uint16_t
     // Set keep alive
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<char*>(&on), sizeof(on));
-    if (bind(fd, result->ai_addr, result->ai_addrlen) != 0 || listen(fd, 128) == -1)
+    if (bind(fd, result->ai_addr, static_cast<int>(result->ai_addrlen)) != 0 || listen(fd, 128) == -1)
     {
         closesocket(fd);
         freeaddrinfo(result);
         return evhttp_bind_socket(httpd, address, port);
     }
-    if (evhttp_accept_socket(httpd, fd) == 0)
+    if (evhttp_accept_socket(httpd, static_cast<evutil_socket_t>(fd)) == 0)
     {
         freeaddrinfo(result);
         return 0;
@@ -808,22 +827,24 @@ void start_server(tr_rpc_server* server)
             return;
         }
 
-        tr_logAddError(fmt::format(
-            fmt::runtime(tr_ngettext(
-                "Couldn't bind to {address} after {count} attempt, giving up",
-                "Couldn't bind to {address} after {count} attempts, giving up",
-                ServerStartRetryCount)),
-            fmt::arg("address", addr_port_str),
-            fmt::arg("count", ServerStartRetryCount)));
+        tr_logAddError(
+            fmt::format(
+                fmt::runtime(tr_ngettext(
+                    "Couldn't bind to {address} after {count} attempt, giving up",
+                    "Couldn't bind to {address} after {count} attempts, giving up",
+                    ServerStartRetryCount)),
+                fmt::arg("address", addr_port_str),
+                fmt::arg("count", ServerStartRetryCount)));
     }
     else
     {
         evhttp_set_gencb(httpd, handle_request, server);
         server->httpd.reset(httpd);
 
-        tr_logAddInfo(fmt::format(
-            fmt::runtime(_("Listening for RPC and Web requests on '{address}'")),
-            fmt::arg("address", addr_port_str)));
+        tr_logAddInfo(
+            fmt::format(
+                fmt::runtime(_("Listening for RPC and Web requests on '{address}'")),
+                fmt::arg("address", addr_port_str)));
     }
 
     rpc_server_start_retry_cancel(server);
@@ -850,9 +871,10 @@ void stop_server(tr_rpc_server* server)
         unlink(address.c_str() + std::size(TrUnixSocketPrefix));
     }
 
-    tr_logAddInfo(fmt::format(
-        fmt::runtime(_("Stopped listening for RPC and Web requests on '{address}'")),
-        fmt::arg("address", server->bind_address_->to_string(server->port()))));
+    tr_logAddInfo(
+        fmt::format(
+            fmt::runtime(_("Stopped listening for RPC and Web requests on '{address}'")),
+            fmt::arg("address", server->bind_address_->to_string(server->port()))));
 }
 
 void restart_server(tr_rpc_server* const server)
@@ -994,11 +1016,12 @@ void tr_rpc_server::load(Settings&& settings)
     if (!bind_address_->from_string(settings_.bind_address_str))
     {
         // NOTE: bind_address_ is default initialized to INADDR_ANY
-        tr_logAddWarn(fmt::format(
-            fmt::runtime(_(
-                "The '{key}' setting is '{value}' but must be an IPv4 or IPv6 address or a Unix socket path. Using default value '0.0.0.0'")),
-            fmt::arg("key", tr_quark_get_string_view(TR_KEY_rpc_bind_address)),
-            fmt::arg("value", settings_.bind_address_str)));
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(_(
+                    "The '{key}' setting is '{value}' but must be an IPv4 or IPv6 address or a Unix socket path. Using default value '0.0.0.0'")),
+                fmt::arg("key", tr_quark_get_string_view(TR_KEY_rpc_bind_address)),
+                fmt::arg("value", settings_.bind_address_str)));
     }
 
     if (bind_address_->is_unix_addr())
@@ -1022,6 +1045,10 @@ void tr_rpc_server::load(Settings&& settings)
         {
             tr_logAddInfo(_("Password required"));
         }
+    }
+    else
+    {
+        session->run_in_session_thread(stop_server, this);
     }
 
     if (!std::empty(web_client_dir_))

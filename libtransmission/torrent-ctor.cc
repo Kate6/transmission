@@ -7,7 +7,8 @@
 
 #include "libtransmission/torrent-ctor.h"
 #include "libtransmission/error.h"
-#include "libtransmission/utils.h" // for tr_file_read()
+#include "libtransmission/file-utils.h"
+#include "libtransmission/types.h"
 
 using namespace std::literals;
 
@@ -108,20 +109,6 @@ std::optional<std::string> tr_ctorGetSourceFile(tr_ctor const* const ctor)
     }
 
     return {};
-}
-
-void tr_ctorSetFilePriorities(
-    tr_ctor* const ctor,
-    tr_file_index_t const* const files,
-    tr_file_index_t const n_files,
-    tr_priority_t const priority)
-{
-    ctor->set_file_priorities(files, n_files, priority);
-}
-
-void tr_ctorSetFilesWanted(tr_ctor* ctor, tr_file_index_t const* const files, tr_file_index_t const n_files, bool const wanted)
-{
-    ctor->set_files_wanted(files, n_files, wanted);
 }
 
 void tr_ctorSetDeleteSource(tr_ctor* const ctor, bool const delete_source)

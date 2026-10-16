@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <ctime>
 #include <map>
 #include <set>
@@ -41,6 +42,7 @@
 #include "IconCache.h"
 #include "NativeIcon.h"
 #include "Prefs.h"
+#include "QtCompat.h"
 #include "Session.h"
 #include "SqueezeLabel.h"
 #include "Torrent.h"
@@ -65,7 +67,7 @@ class TrackersDialog : public BaseDialog
     Q_OBJECT
 
 public:
-    explicit TrackersDialog(QString tracker_list, QWidget* parent = nullptr)
+    explicit TrackersDialog(QString const& tracker_list, QWidget* parent = nullptr)
         : BaseDialog{ parent }
     {
         ui_.setupUi(this);
@@ -112,6 +114,7 @@ int constexpr RefreshIntervalMSec = 4000;
 
 char constexpr const* const PrefKey = "pref_key";
 
+// NOLINTNEXTLINE(performance-enum-size)
 enum // peer columns
 {
     COL_LOCK,
@@ -128,8 +131,8 @@ int measureViewItem(QTreeWidget const* view, int column, QString const& text)
 {
     QTreeWidgetItem const* header_item = view->headerItem();
 
-    int const item_width = Utils::measureViewItem(view, text);
-    int const header_width = Utils::measureHeaderItem(view->header(), header_item->text(column));
+    auto const item_width = Utils::measureViewItem(view, text);
+    auto const header_width = Utils::measureHeaderItem(view->header(), header_item->text(column));
 
     return std::max(item_width, header_width);
 }
@@ -228,6 +231,7 @@ private:
 
                 for (int i = 0; i < 16; ++i)
                 {
+                    // NOLINTNEXTLINE(bugprone-narrowing-conversions): TODO(c++20): use std::bit_cast after gcc 11.1
                     tmp[i] = ipv6_address[i];
                 }
 
@@ -247,7 +251,7 @@ private:
 // ---
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-int DetailsDialog::prev_tab_index_ = 0;
+int DetailsDialog::prev_tab_index = 0;
 
 DetailsDialog::DetailsDialog(Session& session, Prefs& prefs, TorrentModel const& model, QWidget* parent)
     : BaseDialog{ parent }
@@ -265,21 +269,21 @@ DetailsDialog::DetailsDialog(Session& session, Prefs& prefs, TorrentModel const&
 
     adjustSize();
     ui_.commentTextEdit->setMaximumHeight(QWIDGETSIZE_MAX);
-    ui_.tabs->setCurrentIndex(prev_tab_index_);
+    ui_.tabs->setCurrentIndex(prev_tab_index);
 
-    static std::array<int, 2> constexpr InitKeys = {
-        Prefs::SHOW_TRACKER_SCRAPES,
-        Prefs::SHOW_BACKUP_TRACKERS,
+    static std::array<tr_quark, 2> constexpr InitKeys = {
+        TR_KEY_show_tracker_scrapes,
+        TR_KEY_show_backup_trackers,
     };
 
-    for (int const key : InitKeys)
+    for (tr_quark const key : InitKeys)
     {
         refreshPref(key);
     }
 
     connect(&model_, &TorrentModel::torrentsChanged, this, &DetailsDialog::onTorrentsChanged);
     connect(&model_, &TorrentModel::torrentsEdited, this, &DetailsDialog::onTorrentsEdited);
-    connect(&prefs_, &Prefs::changed, this, &DetailsDialog::refreshPref);
+    connect(&prefs_, qOverload<tr_quark>(&Prefs::changed), this, &DetailsDialog::refreshPref);
 
     // call refreshModel periodically
     connect(&model_timer_, &QTimer::timeout, this, &DetailsDialog::refreshModel);
@@ -297,7 +301,7 @@ DetailsDialog::DetailsDialog(Session& session, Prefs& prefs, TorrentModel const&
 
 DetailsDialog::~DetailsDialog()
 {
-    prev_tab_index_ = ui_.tabs->currentIndex();
+    prev_tab_index = ui_.tabs->currentIndex();
 }
 
 void DetailsDialog::setIds(torrent_ids_t const& ids)
@@ -318,9 +322,9 @@ void DetailsDialog::setIds(torrent_ids_t const& ids)
     }
 }
 
-void DetailsDialog::refreshPref(int key)
+void DetailsDialog::refreshPref(tr_quark key)
 {
-    if (key == Prefs::SHOW_TRACKER_SCRAPES)
+    if (key == TR_KEY_show_tracker_scrapes)
     {
         auto* selection_model = ui_.trackersView->selectionModel();
         tracker_delegate_->setShowMore(prefs_.get<bool>(key));
@@ -329,7 +333,7 @@ void DetailsDialog::refreshPref(int key)
         selection_model->select(selection_model->selection(), QItemSelectionModel::Select);
         selection_model->setCurrentIndex(selection_model->currentIndex(), QItemSelectionModel::NoUpdate);
     }
-    else if (key == Prefs::SHOW_BACKUP_TRACKERS)
+    else if (key == TR_KEY_show_backup_trackers)
     {
         tracker_filter_->setShowBackupTrackers(prefs_.get<bool>(key));
     }
@@ -548,8 +552,8 @@ void DetailsDialog::refreshUI()
     else
     {
         uint64_t left_until_done = 0;
-        int64_t have_verified = 0;
-        int64_t have_unverified = 0;
+        uint64_t have_verified = 0;
+        uint64_t have_unverified = 0;
 
         for (Torrent const* const t : torrents)
         {
@@ -570,13 +574,13 @@ void DetailsDialog::refreshUI()
         auto const pct = Formatter::percent_to_string(d);
         auto const size_when_done_str = Formatter::storage_to_string(size_when_done);
 
-        if (have_unverified == 0 && left_until_done == 0)
+        if (have_unverified == 0U && left_until_done == 0U)
         {
             //: Text following the "Have:" label in torrent properties dialog;
             //: %1 is amount of downloaded and verified data
             string = tr("%1 (100%)").arg(Formatter::storage_to_string(have_verified));
         }
-        else if (have_unverified == 0)
+        else if (have_unverified == 0U)
         {
             //: Text following the "Have:" label in torrent properties dialog;
             //: %1 is amount of downloaded and verified data,
@@ -1249,6 +1253,10 @@ void DetailsDialog::refreshUI()
                     txt = tr("Peer is connected over µTP");
                     break;
 
+                case 'h':
+                    txt = tr("Peer supports holepunch (BEP 55)");
+                    break;
+
                 default:
                     break;
                 }
@@ -1280,7 +1288,7 @@ void DetailsDialog::refreshUI()
 
     for (auto const& [key, item] : peers_)
     {
-        if (peers2.count(key) == 0U) // old peer has disconnected
+        if (!peers2.contains(key)) // old peer has disconnected
         {
             ui_.peersView->takeTopLevelItem(ui_.peersView->indexOfTopLevelItem(item));
             delete item;
@@ -1327,12 +1335,12 @@ void DetailsDialog::initInfoTab()
 
 void DetailsDialog::onShowTrackerScrapesToggled(bool val)
 {
-    prefs_.set(Prefs::SHOW_TRACKER_SCRAPES, val);
+    prefs_.set(TR_KEY_show_tracker_scrapes, val);
 }
 
 void DetailsDialog::onShowBackupTrackersToggled(bool val)
 {
-    prefs_.set(Prefs::SHOW_BACKUP_TRACKERS, val);
+    prefs_.set(TR_KEY_show_backup_trackers, val);
 }
 
 void DetailsDialog::onHonorsSessionLimitsToggled(bool val)
@@ -1397,7 +1405,7 @@ void DetailsDialog::onBandwidthPriorityChanged(int index)
 
 void DetailsDialog::onTrackerSelectionChanged()
 {
-    int const selection_count = ui_.trackersView->selectionModel()->selectedRows().size();
+    auto const selection_count = ui_.trackersView->selectionModel()->selectedRows().size();
     ui_.removeTrackerButton->setEnabled(selection_count > 0);
 }
 
@@ -1423,7 +1431,7 @@ void DetailsDialog::onAddTrackerClicked()
     {
         // for each selected torrent...
         auto sv = info.announce.sv();
-        auto const announce_url = QString::fromUtf8(std::data(sv), std::size(sv));
+        auto const announce_url = QString::fromUtf8(std::data(sv), static_cast<IF_QT6(qsizetype, int)>(std::size(sv)));
         for (auto const& id : ids_)
         {
             // make a note if the torrent doesn't already have the URL
@@ -1451,7 +1459,7 @@ void DetailsDialog::onAddTrackerClicked()
         for (auto const& [ids, urls] : ids_to_urls)
         {
             auto urls_list = QList<QString>{};
-            urls_list.reserve(std::size(urls));
+            urls_list.reserve(static_cast<IF_QT6(qsizetype, int)>(std::size(urls)));
             for (auto const& url : urls)
             {
                 urls_list << url;
@@ -1462,7 +1470,7 @@ void DetailsDialog::onAddTrackerClicked()
     }
 }
 
-void DetailsDialog::onTrackerListEdited(QString tracker_list)
+void DetailsDialog::onTrackerListEdited(QString const& tracker_list)
 {
     torrentSet(TR_KEY_tracker_list, tracker_list);
 }
@@ -1582,8 +1590,8 @@ void DetailsDialog::initTrackerTab()
     ui_.editTrackersButton->setIcon(icons::icon(icons::Type::EditTrackers));
     ui_.removeTrackerButton->setIcon(icons::icon(icons::Type::RemoveTracker));
 
-    ui_.showTrackerScrapesCheck->setChecked(prefs_.get<bool>(Prefs::SHOW_TRACKER_SCRAPES));
-    ui_.showBackupTrackersCheck->setChecked(prefs_.get<bool>(Prefs::SHOW_BACKUP_TRACKERS));
+    ui_.showTrackerScrapesCheck->setChecked(prefs_.get<bool>(TR_KEY_show_tracker_scrapes));
+    ui_.showBackupTrackersCheck->setChecked(prefs_.get<bool>(TR_KEY_show_backup_trackers));
 
     connect(ui_.addTrackerButton, &QAbstractButton::clicked, this, &DetailsDialog::onAddTrackerClicked);
     connect(ui_.editTrackersButton, &QAbstractButton::clicked, this, &DetailsDialog::onEditTrackersClicked);

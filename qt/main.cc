@@ -38,14 +38,70 @@ auto constexpr QtArgsSeparator = "---"sv;
 
 using Arg = tr_option::Arg;
 auto constexpr Opts = std::array<tr_option, 8>{ {
-    { 'g', "config-dir", "Where to look for configuration files", "g", Arg::Required, "<path>" },
-    { 'm', "minimized", "Start minimized in system tray", "m", Arg::None, nullptr },
-    { 'p', "port", "Port to use when connecting to an existing session", "p", Arg::Required, "<port>" },
-    { 'r', "remote", "Connect to an existing session at the specified hostname", "r", Arg::Required, "<host>" },
-    { 'u', "username", "Username to use when connecting to an existing session", "u", Arg::Required, "<username>" },
-    { 'v', "version", "Show version number and exit", "v", Arg::None, nullptr },
-    { 'w', "password", "Password to use when connecting to an existing session", "w", Arg::Required, "<password>" },
-    { 0, nullptr, nullptr, nullptr, Arg::None, nullptr },
+    {
+        .val = 'g',
+        .longName = "config-dir",
+        .description = "Where to look for configuration files",
+        .shortName = "g",
+        .arg = Arg::Required,
+        .argName = "<path>",
+    },
+    {
+        .val = 'm',
+        .longName = "minimized",
+        .description = "Start minimized in system tray",
+        .shortName = "m",
+        .arg = Arg::None,
+        .argName = nullptr,
+    },
+    {
+        .val = 'p',
+        .longName = "port",
+        .description = "Port to use when connecting to an existing session",
+        .shortName = "p",
+        .arg = Arg::Required,
+        .argName = "<port>",
+    },
+    {
+        .val = 'r',
+        .longName = "remote",
+        .description = "Connect to an existing session at the specified hostname",
+        .shortName = "r",
+        .arg = Arg::Required,
+        .argName = "<host>",
+    },
+    {
+        .val = 'u',
+        .longName = "username",
+        .description = "Username to use when connecting to an existing session",
+        .shortName = "u",
+        .arg = Arg::Required,
+        .argName = "<username>",
+    },
+    {
+        .val = 'v',
+        .longName = "version",
+        .description = "Show version number and exit",
+        .shortName = "v",
+        .arg = Arg::None,
+        .argName = nullptr,
+    },
+    {
+        .val = 'w',
+        .longName = "password",
+        .description = "Password to use when connecting to an existing session",
+        .shortName = "w",
+        .arg = Arg::Required,
+        .argName = "<password>",
+    },
+    {
+        .val = 0,
+        .longName = nullptr,
+        .description = nullptr,
+        .shortName = nullptr,
+        .arg = Arg::None,
+        .argName = nullptr,
+    },
 } };
 static_assert(Opts[std::size(Opts) - 2].val != 0);
 } // namespace
@@ -207,41 +263,40 @@ int tr_main(int argc, char** argv)
     }
 
     // initialize the prefs
-    auto prefs = Prefs{};
-    prefs.loadFromConfigDir(config_dir);
+    auto prefs = Prefs{ config_dir };
 
     if (!host.isNull())
     {
-        prefs.set(Prefs::SESSION_REMOTE_HOST, host);
+        prefs.set(TR_KEY_remote_session_host, host);
     }
 
     if (!port.isNull())
     {
-        prefs.set(Prefs::SESSION_REMOTE_PORT, port.toUInt());
+        prefs.set(TR_KEY_remote_session_port, port.toUInt());
     }
 
     if (!username.isNull())
     {
-        prefs.set(Prefs::SESSION_REMOTE_USERNAME, username);
+        prefs.set(TR_KEY_remote_session_username, username);
     }
 
     if (!password.isNull())
     {
-        prefs.set(Prefs::SESSION_REMOTE_PASSWORD, password);
+        prefs.set(TR_KEY_remote_session_password, password);
     }
 
     if (!host.isNull() || !port.isNull() || !username.isNull() || !password.isNull())
     {
-        prefs.set(Prefs::SESSION_IS_REMOTE, true);
+        prefs.set(TR_KEY_remote_session_enabled, true);
     }
 
-    if (prefs.get<bool>(Prefs::START_MINIMIZED))
+    if (prefs.get<bool>(TR_KEY_start_minimized))
     {
         minimized = true;
     }
 
     // start as minimized only if the system tray present
-    if (!prefs.get<bool>(Prefs::SHOW_TRAY_ICON))
+    if (!prefs.get<bool>(TR_KEY_show_notification_area_icon))
     {
         minimized = false;
     }

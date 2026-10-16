@@ -26,8 +26,6 @@
 
 #define LIBTRANSMISSION_ANNOUNCER_MODULE
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/announce-list.h"
 #include "libtransmission/announcer-common.h"
 #include "libtransmission/announcer.h"
@@ -35,10 +33,11 @@
 #include "libtransmission/interned-string.h" // tr_interned_string
 #include "libtransmission/log.h"
 #include "libtransmission/session.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/timer.h"
 #include "libtransmission/torrent.h"
 #include "libtransmission/tr-assert.h"
-#include "libtransmission/tr-macros.h" // tr_sha1_digest_t, TR_C...
+#include "libtransmission/types.h" // tr_sha1_digest_t
 #include "libtransmission/utils.h"
 #include "libtransmission/web-utils.h"
 
@@ -89,10 +88,13 @@ struct StopsCompare
         return tr_compare_3way(one.announce_url, two.announce_url);
     }
 
+    // Suppress STL-instantiation noise from MSVC xutility noexcept(bool(...)).
+    // NOLINTBEGIN(readability-redundant-casting)
     [[nodiscard]] constexpr auto operator()(tr_announce_request const& one, tr_announce_request const& two) const noexcept
     {
         return compare(one, two) < 0;
     }
+    // NOLINTEND(readability-redundant-casting)
 };
 
 } // namespace
@@ -862,16 +864,16 @@ auto tier_announce_event_pull(tr_tier* tier)
     return e;
 }
 
-bool isUnregistered(char const* errmsg)
+bool isUnregistered(std::string_view errmsg)
 {
-    auto const lower = tr_strlower(errmsg != nullptr ? errmsg : "");
+    auto const lower = tr_strlower(errmsg);
 
-    auto constexpr Keys = std::array<std::string_view, 2>{ "unregistered torrent"sv, "torrent not registered"sv };
+    auto constexpr Keys = std::array{ "unregistered torrent"sv, "torrent not registered"sv };
 
     return std::ranges::any_of(Keys, [&lower](auto const& key) { return tr_strv_contains(lower, key); });
 }
 
-void on_announce_error(tr_tier* tier, char const* err, tr_announce_event e, time_t interval = {})
+void on_announce_error(tr_tier* tier, std::string_view err, tr_announce_event e, time_t interval = {})
 {
     using namespace announce_helpers;
 
@@ -1013,11 +1015,11 @@ void tr_announcer_impl::onAnnounceDone(
             response.downloads.value_or(-1),
             response.interval,
             response.min_interval,
-            (!std::empty(response.tracker_id) ? response.tracker_id.c_str() : "none"),
+            !std::empty(response.tracker_id) ? response.tracker_id : "none"sv,
             std::size(response.pex),
             std::size(response.pex6),
-            (!std::empty(response.errmsg) ? response.errmsg.c_str() : "none"),
-            (!std::empty(response.warning) ? response.warning.c_str() : "none")));
+            !std::empty(response.errmsg) ? response.errmsg : "none"sv,
+            !std::empty(response.warning) ? response.warning : "none"sv));
 
     // https://github.com/arvidn/libtorrent/issues/5084#issuecomment-688516452
     if (response.min_interval != 0)
@@ -1062,7 +1064,7 @@ void tr_announcer_impl::onAnnounceDone(
 
         on_announce_error(
             tier,
-            response.errmsg.c_str(),
+            response.errmsg,
             event,
             response.interval > time_t{} ? response.interval : response.min_interval);
     }
@@ -1247,7 +1249,7 @@ namespace on_scrape_done_helpers
     return std::ranges::any_of(too_long_errors, [&errmsg](auto const& substr) { return tr_strv_contains(errmsg, substr); });
 }
 
-void on_scrape_error(tr_session const* /*session*/, tr_tier* tier, char const* errmsg)
+void on_scrape_error(tr_session const* /*session*/, tr_tier* tier, std::string_view errmsg)
 {
     if (auto* const current_tracker = tier->currentTracker(); current_tracker != nullptr)
     {
@@ -1263,7 +1265,7 @@ void on_scrape_error(tr_session const* /*session*/, tr_tier* tier, char const* e
     }
 
     // set the error message
-    tier->last_scrape_str = errmsg != nullptr ? errmsg : "";
+    tier->last_scrape_str = errmsg;
     tier->lastScrapeSucceeded = false;
 
     // switch to the next tracker
@@ -1370,7 +1372,7 @@ void tr_announcer_impl::onScrapeDone(tr_scrape_response const& response)
         }
         else if (!std::empty(response.errmsg))
         {
-            on_scrape_error(session, tier, response.errmsg.c_str());
+            on_scrape_error(session, tier, response.errmsg);
         }
         else
         {
@@ -1582,11 +1584,14 @@ void scrapeAndAnnounceMore(tr_announcer_impl* announcer)
      * available, use compareAnnounceTiers to prioritize. */
     if (announce_me.size() > MaxAnnouncesPerUpkeep)
     {
+        // Suppress STL-instantiation noise from MSVC xutility noexcept(bool(...)).
+        // NOLINTBEGIN(readability-redundant-casting)
         std::partial_sort(
             std::begin(announce_me),
             std::begin(announce_me) + MaxAnnouncesPerUpkeep,
             std::end(announce_me),
             [](auto const* a, auto const* b) { return compareAnnounceTiers(a, b) < 0; });
+        // NOLINTEND(readability-redundant-casting)
         announce_me.resize(MaxAnnouncesPerUpkeep);
     }
 
@@ -1803,15 +1808,19 @@ void tr_announcer_impl::resetTorrent(tr_torrent* tor)
         }
     }
 
-    // kickstart any tiers that didn't get started
-    if (tor->is_running())
+    // kickstart any tiers that didn't get started:
+    // 1. ensure every tier has a current tracker
+    // 2. if we weren't already talking to the current tracker, then say hello
+    auto const is_running = tor->is_running();
+    auto const now = tr_time();
+    for (auto& tier : newer->tiers)
     {
-        auto const now = tr_time();
-        for (auto& tier : newer->tiers)
+        if (!tier.current_tracker_index_)
         {
-            if (!tier.current_tracker_index_)
+            tier.useNextTracker();
+
+            if (is_running)
             {
-                tier.useNextTracker();
                 tier_announce_event_push(&tier, TR_ANNOUNCE_EVENT_STARTED, now);
             }
         }

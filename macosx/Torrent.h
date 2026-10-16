@@ -110,6 +110,7 @@ extern NSString* const kTorrentDidChangeGroupNotification;
 @property(nonatomic, readonly) NSInteger pieceSize;
 @property(nonatomic, readonly) NSInteger pieceCount;
 @property(nonatomic, readonly) NSString* hashString;
+@property(nonatomic, readonly) tr_torrent_id_t id;
 @property(nonatomic, readonly) BOOL privateTorrent;
 
 @property(nonatomic, readonly) NSString* torrentLocation;
@@ -197,7 +198,6 @@ extern NSString* const kTorrentDidChangeGroupNotification;
 
 //methods require fileStats to have been updated recently to be accurate
 - (CGFloat)fileProgress:(FileListNode*)node;
-- (BOOL)canChangeDownloadCheckForFile:(NSUInteger)index;
 - (BOOL)canChangeDownloadCheckForFiles:(NSIndexSet*)indexSet;
 - (NSControlStateValue)checkForFiles:(NSIndexSet*)indexSet;
 - (void)setFileCheckState:(NSControlStateValue)state forIndexes:(NSIndexSet*)indexSet;

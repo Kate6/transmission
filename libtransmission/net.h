@@ -10,6 +10,7 @@
 
 #include <algorithm> // for std::copy_n
 #include <array>
+#include <compare>
 #include <cstddef> // size_t
 #include <cstdint> // uint16_t, uint32_t, uint8_t
 #include <optional>
@@ -20,7 +21,6 @@
 #ifdef _WIN32
 #include <ws2tcpip.h>
 #else
-#include <arpa/inet.h>
 #include <cerrno>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -61,84 +61,14 @@ using tr_socket_t = int;
 #define set_sockerrno(save) (sockerrno) = (save)
 #endif
 
-#include "libtransmission/transmission.h" // tr_peer_from
+[[nodiscard]] constexpr bool is_valid_socket(tr_socket_t s) noexcept
+{
+    return s != static_cast<tr_socket_t>(TR_BAD_SOCKET);
+}
 
 #include "libtransmission/tr-assert.h"
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h" // for tr_compare_3way()
-
-/**
- * Literally just a port number.
- *
- * Exists so that you never have to wonder what byte order a port variable is in.
- */
-class tr_port
-{
-public:
-    tr_port() noexcept = default;
-
-    [[nodiscard]] constexpr static tr_port from_host(uint16_t hport) noexcept
-    {
-        return tr_port{ hport };
-    }
-
-    [[nodiscard]] static tr_port from_network(uint16_t nport) noexcept
-    {
-        return tr_port{ ntohs(nport) };
-    }
-
-    [[nodiscard]] constexpr uint16_t host() const noexcept
-    {
-        return hport_;
-    }
-
-    [[nodiscard]] uint16_t network() const noexcept
-    {
-        return htons(hport_);
-    }
-
-    constexpr void set_host(uint16_t hport) noexcept
-    {
-        hport_ = hport;
-    }
-
-    [[nodiscard]] static std::pair<tr_port, std::byte const*> from_compact(std::byte const* compact) noexcept;
-
-    [[nodiscard]] constexpr auto operator<(tr_port const& that) const noexcept
-    {
-        return hport_ < that.hport_;
-    }
-
-    [[nodiscard]] constexpr auto operator==(tr_port const& that) const noexcept
-    {
-        return hport_ == that.hport_;
-    }
-
-    // Can be removed once we use C++20
-    [[nodiscard]] constexpr auto operator!=(tr_port const& that) const noexcept
-    {
-        return hport_ != that.hport_;
-    }
-
-    [[nodiscard]] constexpr auto empty() const noexcept
-    {
-        return hport_ == 0;
-    }
-
-    constexpr void clear() noexcept
-    {
-        hport_ = 0;
-    }
-
-    static auto constexpr CompactPortBytes = 2U;
-
-private:
-    explicit constexpr tr_port(uint16_t hport) noexcept
-        : hport_{ hport }
-    {
-    }
-
-    uint16_t hport_ = 0;
-};
 
 enum tr_address_type : uint8_t
 {
@@ -210,31 +140,11 @@ struct tr_address
 
     // --- comparisons
 
-    [[nodiscard]] int compare(tr_address const& that) const noexcept;
+    [[nodiscard]] std::strong_ordering operator<=>(tr_address const& that) const noexcept;
 
     [[nodiscard]] bool operator==(tr_address const& that) const noexcept
     {
-        return this->compare(that) == 0;
-    }
-
-    [[nodiscard]] bool operator!=(tr_address const& that) const noexcept
-    {
-        return !(*this == that);
-    }
-
-    [[nodiscard]] bool operator<(tr_address const& that) const noexcept
-    {
-        return this->compare(that) < 0;
-    }
-
-    [[nodiscard]] bool operator<=(tr_address const& that) const noexcept
-    {
-        return this->compare(that) <= 0;
-    }
-
-    [[nodiscard]] bool operator>(tr_address const& that) const noexcept
-    {
-        return this->compare(that) > 0;
+        return (*this <=> that) == 0;
     }
 
     // ---
@@ -382,13 +292,16 @@ struct tr_address
     // 2001::/32
     [[nodiscard]] constexpr bool is_ipv6_teredo() const noexcept
     {
-        return is_ipv6() && reinterpret_cast<uint32_t const*>(&addr.addr6)[0] == htonl(0x20010000U);
+        return is_ipv6() && reinterpret_cast<uint8_t const*>(&addr.addr6)[0] == 0x20U &&
+            reinterpret_cast<uint8_t const*>(&addr.addr6)[1] == 0x01U &&
+            reinterpret_cast<uint8_t const*>(&addr.addr6)[2] == 0U && reinterpret_cast<uint8_t const*>(&addr.addr6)[3] == 0U;
     }
 
     // 2002::/16
     [[nodiscard]] constexpr bool is_ipv6_6to4() const noexcept
     {
-        return is_ipv6() && reinterpret_cast<uint16_t const*>(&addr.addr6)[0] == htons(0x2002U);
+        return is_ipv6() && reinterpret_cast<uint8_t const*>(&addr.addr6)[0] == 0x20U &&
+            reinterpret_cast<uint8_t const*>(&addr.addr6)[1] == 0x02U;
     }
 
     // fe80::/64 from fe80::/10
@@ -413,7 +326,7 @@ struct tr_address
     } addr = {};
 
     static auto constexpr CompactAddrBytes = std::array{ 4U, 16U };
-    static auto constexpr CompactAddrMaxBytes = *std::max_element(std::begin(CompactAddrBytes), std::end(CompactAddrBytes));
+    static auto constexpr CompactAddrMaxBytes = *std::ranges::max_element(CompactAddrBytes);
     static_assert(std::size(CompactAddrBytes) == NUM_TR_AF_INET_TYPES);
 
     [[nodiscard]] static auto any(tr_address_type type) noexcept
@@ -472,22 +385,12 @@ struct tr_socket_address
         return display_name(address_, port_);
     }
 
-    [[nodiscard]] auto is_valid() const noexcept
+    [[nodiscard]] constexpr auto is_valid() const noexcept
     {
         return address_.is_valid();
     }
 
     [[nodiscard]] bool is_valid_for_peers(tr_peer_from from) const noexcept;
-
-    [[nodiscard]] int compare(tr_socket_address const& that) const noexcept
-    {
-        if (auto const val = tr_compare_3way(address_, that.address_); val != 0)
-        {
-            return val;
-        }
-
-        return tr_compare_3way(port_, that.port_);
-    }
 
     // --- compact addr + port -- very common format used for peer exchange, dht, tracker announce responses
 
@@ -554,14 +457,19 @@ struct tr_socket_address
 
     // --- Comparisons
 
-    [[nodiscard]] auto operator<(tr_socket_address const& that) const noexcept
+    [[nodiscard]] auto operator<=>(tr_socket_address const& that) const noexcept
     {
-        return compare(that) < 0;
+        if (auto const val = address_ <=> that.address_; val != 0)
+        {
+            return val;
+        }
+
+        return port_ <=> that.port_;
     }
 
     [[nodiscard]] auto operator==(tr_socket_address const& that) const noexcept
     {
-        return compare(that) == 0;
+        return (*this <=> that) == 0;
     }
 
     tr_address address_;
@@ -614,43 +522,15 @@ private:
 struct tr_session;
 
 tr_socket_t tr_netBindTCP(tr_address const& addr, tr_port port, bool suppress_msgs, tr_session* session);
-int tr_bindSocketToInterface(int sockfd, tr_session* session);
+int tr_bindSocketToInterface(int sockfd, tr_session const* session);
 
 [[nodiscard]] std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(
     tr_session* session,
     tr_socket_t listening_sockfd);
 
-void tr_netSetCongestionControl(tr_socket_t s, char const* algorithm);
-
-[[nodiscard]] tr_socket_t tr_net_open_peer_socket(
-    tr_session* session,
-    tr_socket_address const& socket_address,
-    bool client_is_seed);
-
 void tr_net_close_socket(tr_socket_t fd);
 
 // --- TOS / DSCP
-
-// A serializer-friendly wrapper around the DiffServ int value
-class tr_diffserv_t
-{
-public:
-    constexpr tr_diffserv_t() = default;
-
-    constexpr explicit tr_diffserv_t(int value)
-        : value_{ value }
-    {
-    }
-
-    // NOLINTNEXTLINE(google-explicit-constructor)
-    [[nodiscard]] constexpr operator int() const noexcept
-    {
-        return value_;
-    }
-
-private:
-    int value_ = 0x04;
-};
 
 // set the IPTOS_ value for the specified socket
 void tr_netSetDiffServ(tr_socket_t sock, int tos, tr_address_type type);

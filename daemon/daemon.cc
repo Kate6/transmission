@@ -32,9 +32,11 @@
 #include <libtransmission/transmission.h>
 
 #include <libtransmission/error.h>
+#include <libtransmission/file-utils.h>
 #include <libtransmission/file.h>
 #include <libtransmission/log.h>
 #include <libtransmission/quark.h>
+#include <libtransmission/string-utils.h>
 #include <libtransmission/timer-ev.h>
 #include <libtransmission/tr-getopt.h>
 #include <libtransmission/tr-strbuf.h>
@@ -358,11 +360,9 @@ void printMessage(
 
 void pumpLogMessages(FILE* log_stream)
 {
-    tr_log_message* list = tr_logGetQueue();
-
-    for (tr_log_message const* l = list; l != nullptr; l = l->next)
+    for (auto const& l : tr_logGetQueue())
     {
-        printMessage(log_stream, l->when, l->level, l->name, l->message, l->file, l->line);
+        printMessage(log_stream, l.when, l.level, l.name, l.message, l.file, l.line);
     }
 
     // two reasons to not flush stderr:
@@ -372,22 +372,11 @@ void pumpLogMessages(FILE* log_stream)
     {
         fflush(log_stream);
     }
-
-    tr_logFreeQueue(list);
 }
 
 void periodic_update(evutil_socket_t /*fd*/, short /*what*/, void* arg)
 {
     static_cast<tr_daemon*>(arg)->periodic_update();
-}
-
-tr_rpc_callback_status on_rpc_callback(tr_session* /*session*/, tr_rpc_callback_type type, tr_torrent* /*tor*/, void* arg)
-{
-    if (type == TR_RPC_SESSION_CLOSE)
-    {
-        static_cast<tr_daemon*>(arg)->stop();
-    }
-    return TR_RPC_OK;
 }
 
 tr_variant load_settings(std::string_view const config_dir)
@@ -702,13 +691,13 @@ bool tr_daemon::parse_args(int argc, char const* const* argv, bool* dump_setting
         case 953:
             if (auto const ratio_limit = tr_num_parse<double>(optstr); ratio_limit)
             {
-                map->insert_or_assign(TR_KEY_ratio_limit, *ratio_limit);
+                map->insert_or_assign(TR_KEY_seed_ratio_limit, *ratio_limit);
             }
-            map->insert_or_assign(TR_KEY_ratio_limit_enabled, true);
+            map->insert_or_assign(TR_KEY_seed_ratio_limited, true);
             break;
 
         case 954:
-            map->insert_or_assign(TR_KEY_ratio_limit_enabled, false);
+            map->insert_or_assign(TR_KEY_seed_ratio_limited, false);
             break;
 
         case 'x':
@@ -849,8 +838,31 @@ int tr_daemon::start([[maybe_unused]] bool foreground)
 
     /* start the session */
     auto* session = tr_sessionInit(config_dir_, true, settings_);
-    tr_sessionSetRPCCallback(session, on_rpc_callback, this);
+    tr_sessionSetRPCCallback(
+        session,
+        [this](tr_rpc_callback_type const type, std::optional<tr_torrent_id_t> const /*tor_id*/)
+        {
+            if (type == TR_RPC_SESSION_CLOSE)
+            {
+                stop();
+            }
+
+            return TR_RPC_OK;
+        });
     tr_logAddInfo(fmt::format(fmt::runtime(_("Loading settings from '{path}'")), fmt::arg("path", config_dir_)));
+
+    // A warning, not a failure: see tr_sessionOwnsConfigDir() for why this is
+    // not proof of a second session.
+    if (!tr_sessionOwnsConfigDir(session))
+    {
+        tr_logAddWarn(
+            fmt::format(
+                fmt::runtime(
+                    _("Couldn't claim '{path}'. If another Transmission session is using it, the two will "
+                      "overwrite each other's settings, resume files and stats.")),
+                fmt::arg("path", config_dir_)));
+    }
+
     tr_sessionSaveSettings(session, config_dir_, settings_);
 
     auto const* const settings_map = settings_.get_if<tr_variant::Map>();

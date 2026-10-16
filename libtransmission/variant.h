@@ -9,6 +9,7 @@
 #include <cstddef> // size_t
 #include <cstdint> // int64_t
 #include <functional> // std::invoke
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -91,7 +92,7 @@ public:
             {
                 return item.first == key;
             };
-            return std::find_if(std::begin(vec_), std::end(vec_), predicate);
+            return std::ranges::find_if(vec_, predicate);
         }
 
         [[nodiscard]] constexpr auto find(tr_quark const key) const noexcept
@@ -101,7 +102,7 @@ public:
 
         [[nodiscard]] constexpr auto contains(tr_quark const key) const noexcept
         {
-            return find(key) != end();
+            return find(key) != end(); // NOLINT(readability-container-contains)
         }
 
         [[nodiscard]] constexpr auto size() const noexcept
@@ -205,6 +206,10 @@ public:
             return std::nullopt;
         }
 
+        Map& merge(Map const& that);
+        Map& merge(Map&& that);
+        [[nodiscard]] Map clone() const;
+
     private:
         using Vector = std::vector<std::pair<tr_quark, tr_variant>>;
         Vector vec_;
@@ -243,7 +248,7 @@ public:
 
     [[nodiscard]] static auto make_raw(void const* value, size_t n_bytes)
     {
-        return tr_variant{ std::string_view{ reinterpret_cast<char const*>(value), n_bytes } };
+        return tr_variant{ std::string_view{ static_cast<char const*>(value), n_bytes } };
     }
 
     template<typename CharSpan>
@@ -338,7 +343,7 @@ public:
     }
 
     template<typename Val>
-    [[nodiscard]] constexpr std::optional<Val> value_if() noexcept
+    [[nodiscard]] constexpr std::optional<Val> value_if() const noexcept
     {
         if (auto const* const val = get_if<Val>())
         {
@@ -348,11 +353,8 @@ public:
         return {};
     }
 
-    template<typename Val>
-    [[nodiscard]] std::optional<Val> value_if() const noexcept
-    {
-        return const_cast<tr_variant*>(this)->value_if<Val>();
-    }
+    template<std::integral Val>
+    [[nodiscard]] constexpr std::optional<Val> value_if() const noexcept;
 
     template<typename Val>
     [[nodiscard]] constexpr bool holds_alternative() const noexcept
@@ -385,10 +387,11 @@ public:
     }
 
     // Usually updates `this` to hold a clone of `that`, with two exceptions:
-    // 1. If both sides hold maps, recursively merge each entry and overwrite
-    //    duplicate keys from `this`.
+    // 1. If both sides hold maps, insert entries from `that` that are missing
+    //    in `this` and keep pre-existing keys in `this` unchanged.
     // 2. Any unmanaged string taken from `that` is copied so `this` owns its copy.
     tr_variant& merge(tr_variant const& that);
+    tr_variant& merge(tr_variant&& that);
 
     // Returns a new copy of `this`.
     // Any unmanaged strings in `this` are copied so the new variant owns its copy.
@@ -398,21 +401,95 @@ private:
     std::variant<std::monostate, std::nullptr_t, bool, int64_t, double, std::string, std::string_view, Vector, Map> val_;
 };
 
+// These specialisations could have been in the class body,
+// but aren't because https://gcc.gnu.org/bugzilla/show_bug.cgi?id=85282
+
 template<>
-[[nodiscard]] std::optional<int64_t> tr_variant::value_if() noexcept;
+[[nodiscard]] constexpr std::optional<std::string_view> tr_variant::value_if() const noexcept
+{
+    switch (index())
+    {
+    case StringIndex:
+        return *std::get_if<std::string>(&val_);
+
+    case StringViewIndex:
+        return *std::get_if<std::string_view>(&val_);
+
+    default:
+        return {};
+    }
+}
+
 template<>
-[[nodiscard]] std::optional<bool> tr_variant::value_if() noexcept;
+[[nodiscard]] constexpr std::optional<int64_t> tr_variant::value_if() const noexcept
+{
+    switch (index())
+    {
+    case IntIndex:
+        return *get_if<IntIndex>();
+
+    case BoolIndex:
+        return *get_if<BoolIndex>() ? 1 : 0;
+
+    default:
+        return {};
+    }
+}
+
 template<>
-[[nodiscard]] std::optional<double> tr_variant::value_if() noexcept;
+[[nodiscard]] constexpr std::optional<bool> tr_variant::value_if() const noexcept
+{
+    switch (index())
+    {
+    case BoolIndex:
+        return *get_if<BoolIndex>();
+
+    case IntIndex:
+        if (auto const val = *get_if<IntIndex>(); val == 0 || val == 1)
+        {
+            return val != 0;
+        }
+        break;
+
+    case StringIndex:
+    case StringViewIndex:
+        if (auto const val = value_if<std::string_view>(); val == "true")
+        {
+            return true;
+        }
+        else if (val == "false")
+        {
+            return false;
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    return {};
+}
+
 template<>
-[[nodiscard]] std::optional<std::string_view> tr_variant::value_if() noexcept;
+[[nodiscard]] std::optional<double> tr_variant::value_if() const noexcept;
+
+template<std::integral Val>
+[[nodiscard]] constexpr std::optional<Val> tr_variant::value_if() const noexcept
+{
+    static_assert(!std::is_same_v<Val, bool>);
+    static_assert(!std::is_same_v<Val, int64_t>);
+    if (auto val = value_if<int64_t>(); val && std::cmp_greater_equal(*val, std::numeric_limits<Val>::lowest()) &&
+        std::cmp_less_equal(*val, std::numeric_limits<Val>::max()))
+    {
+        return val;
+    }
+
+    return {};
+}
 
 // --- Strings
 
 bool tr_variantGetStrView(tr_variant const* variant, std::string_view* setme);
-
-bool tr_variantGetRaw(tr_variant const* variant, std::byte const** setme_raw, size_t* setme_len);
-bool tr_variantGetRaw(tr_variant const* variant, uint8_t const** setme_raw, size_t* setme_len);
 
 // --- Real Numbers
 
@@ -429,20 +506,9 @@ bool tr_variantGetInt(tr_variant const* var, int64_t* setme);
 // --- Lists
 
 void tr_variantInitList(tr_variant* initme, size_t n_reserve);
-void tr_variantListReserve(tr_variant* var, size_t n_reserve);
 
 tr_variant* tr_variantListAdd(tr_variant* var);
-tr_variant* tr_variantListAddBool(tr_variant* var, bool value);
-tr_variant* tr_variantListAddInt(tr_variant* var, int64_t value);
-tr_variant* tr_variantListAddReal(tr_variant* var, double value);
-tr_variant* tr_variantListAddStr(tr_variant* var, std::string_view value);
-tr_variant* tr_variantListAddStrView(tr_variant* var, std::string_view value);
-tr_variant* tr_variantListAddRaw(tr_variant* var, void const* value, size_t n_bytes);
-tr_variant* tr_variantListAddList(tr_variant* var, size_t n_reserve);
-tr_variant* tr_variantListAddDict(tr_variant* var, size_t n_reserve);
 tr_variant* tr_variantListChild(tr_variant* var, size_t pos);
-
-bool tr_variantListRemove(tr_variant* var, size_t pos);
 
 [[nodiscard]] constexpr size_t tr_variantListSize(tr_variant const* const var)
 {
@@ -460,29 +526,18 @@ bool tr_variantListRemove(tr_variant* var, size_t pos);
 // --- Dictionaries
 
 void tr_variantInitDict(tr_variant* initme, size_t n_reserve);
-void tr_variantDictReserve(tr_variant* var, size_t n_reserve);
-bool tr_variantDictRemove(tr_variant* var, tr_quark key);
 
 tr_variant* tr_variantDictAdd(tr_variant* var, tr_quark key);
-tr_variant* tr_variantDictAddReal(tr_variant* var, tr_quark key, double value);
 tr_variant* tr_variantDictAddInt(tr_variant* var, tr_quark key, int64_t value);
-tr_variant* tr_variantDictAddBool(tr_variant* var, tr_quark key, bool value);
-tr_variant* tr_variantDictAddStr(tr_variant* var, tr_quark key, std::string_view value);
 tr_variant* tr_variantDictAddStrView(tr_variant* var, tr_quark key, std::string_view value);
 tr_variant* tr_variantDictAddList(tr_variant* var, tr_quark key, size_t n_reserve);
 tr_variant* tr_variantDictAddDict(tr_variant* var, tr_quark key, size_t n_reserve);
-tr_variant* tr_variantDictAddRaw(tr_variant* var, tr_quark key, void const* value, size_t n_bytes);
 
 bool tr_variantDictChild(tr_variant* var, size_t pos, tr_quark* setme_key, tr_variant** setme_value);
 tr_variant* tr_variantDictFind(tr_variant* var, tr_quark key);
 bool tr_variantDictFindList(tr_variant* var, tr_quark key, tr_variant** setme);
 bool tr_variantDictFindDict(tr_variant* var, tr_quark key, tr_variant** setme_value);
 bool tr_variantDictFindInt(tr_variant* var, tr_quark key, int64_t* setme);
-bool tr_variantDictFindReal(tr_variant* var, tr_quark key, double* setme);
-bool tr_variantDictFindBool(tr_variant* var, tr_quark key, bool* setme);
-bool tr_variantDictFindStrView(tr_variant* var, tr_quark key, std::string_view* setme);
-bool tr_variantDictFindRaw(tr_variant* var, tr_quark key, uint8_t const** setme_raw, size_t* setme_len);
-bool tr_variantDictFindRaw(tr_variant* var, tr_quark key, std::byte const** setme_raw, size_t* setme_len);
 
 /* this is only quasi-supported. don't rely on it too heavily outside of libT */
 void tr_variantMergeDicts(tr_variant* tgt, tr_variant const* src);

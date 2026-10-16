@@ -11,8 +11,9 @@
 #include <QRegularExpression>
 #include <QTest>
 
-#include <libtransmission/api-compat.h>
 #include <libtransmission/transmission.h>
+#include <libtransmission/api-compat.h>
+#include <libtransmission/env.h>
 
 #include "Prefs.h"
 #include "Session.h"
@@ -29,6 +30,8 @@ using Style = api_compat::Style;
 
 Q_DECLARE_METATYPE(Style)
 
+namespace
+{
 [[nodiscard]] QRegularExpression getSessionSetDownloadDirRegEx(Style const style, QString dir)
 {
     dir = QRegularExpression::escape(dir);
@@ -45,7 +48,11 @@ Q_DECLARE_METATYPE(Style)
                 .arg(dir)
         };
     }
+
+    abort();
+    return {};
 }
+} // namespace
 
 class SessionTest
     : public QObject
@@ -73,10 +80,10 @@ private slots:
 
         // setup: make a Prefs that points to a remote session
         auto prefs = Prefs{};
-        prefs.set(Prefs::SESSION_IS_REMOTE, true);
-        prefs.set(Prefs::SESSION_REMOTE_HOST, QStringLiteral("example.invalid"));
-        prefs.set(Prefs::SESSION_REMOTE_PORT, TrDefaultRpcPort);
-        prefs.set(Prefs::DOWNLOAD_DIR, sandbox_dir);
+        prefs.set(TR_KEY_remote_session_enabled, true);
+        prefs.set(TR_KEY_remote_session_host, QStringLiteral("example.invalid"));
+        prefs.set(TR_KEY_remote_session_port, TrDefaultRpcPort);
+        prefs.set(TR_KEY_download_dir, sandbox_dir);
 
         // setup: make a Session
         auto nam = FakeNetworkAccessManager{};
@@ -84,16 +91,15 @@ private slots:
         auto session = Session{ sandbox_dir, prefs, rpc };
         session.restart();
 
-        // action: set Prefs::DOWNLOAD_DIR to a new value
+        // action: set TR_KEY_download_dir to a new value
         auto const before = nam.create_count;
-        prefs.set(Prefs::DOWNLOAD_DIR, downloads_dir);
+        prefs.set(TR_KEY_download_dir, downloads_dir);
 
         // verify that session_set::download_dir was POSTed
         QVERIFY(nam.create_count > before);
         auto const payload_re = getSessionSetDownloadDirRegEx(initial_style, downloads_dir);
-        auto const has_session_set = std::any_of(
-            nam.request_bodies.cbegin(),
-            nam.request_bodies.cend(),
+        auto const has_session_set = std::ranges::any_of(
+            std::as_const(nam.request_bodies),
             [&payload_re](QByteArray const& body)
             {
                 auto const str = QString::fromUtf8(body);

@@ -98,11 +98,11 @@ public:
         Glib::RefPtr<Gtk::Builder> const& builder,
         Glib::RefPtr<Gio::ActionGroup> const& actions,
         Glib::RefPtr<Session> const& core);
+    ~Impl();
     Impl(Impl&&) = delete;
     Impl(Impl const&) = delete;
-    Impl& operator=(Impl&&) = delete;
     Impl& operator=(Impl const&) = delete;
-    ~Impl();
+    Impl& operator=(Impl&&) = delete;
 
     [[nodiscard]] Glib::RefPtr<TorrentViewSelection> get_selection() const;
 
@@ -394,12 +394,15 @@ void MainWindow::Impl::syncAltSpeedButton()
 {
     bool const b = gtr_pref_flag_get(TR_KEY_alt_speed_enabled);
     alt_speed_button_->set_active(b);
-    alt_speed_button_->set_tooltip_text(fmt::format(
-        fmt::runtime(
-            b ? _("Click to disable Alternative Speed Limits\n ({download_speed} down, {upload_speed} up)") :
-                _("Click to enable Alternative Speed Limits\n ({download_speed} down, {upload_speed} up)")),
-        fmt::arg("download_speed", Speed{ gtr_pref_int_get(TR_KEY_alt_speed_down), Speed::Units::KByps }.to_string()),
-        fmt::arg("upload_speed", Speed{ gtr_pref_int_get(TR_KEY_alt_speed_up), Speed::Units::KByps }.to_string())));
+    alt_speed_button_->set_tooltip_text(
+        fmt::format(
+            fmt::runtime(
+                b ? _("Click to disable Alternative Speed Limits\n ({download_speed} down, {upload_speed} up)") :
+                    _("Click to enable Alternative Speed Limits\n ({download_speed} down, {upload_speed} up)")),
+            fmt::arg(
+                "download_speed",
+                Speed{ gtr_pref_int_get<size_t>(TR_KEY_alt_speed_down), Speed::Units::KByps }.to_string()),
+            fmt::arg("upload_speed", Speed{ gtr_pref_int_get<size_t>(TR_KEY_alt_speed_up), Speed::Units::KByps }.to_string())));
 }
 
 void MainWindow::Impl::alt_speed_toggled_cb()
@@ -486,13 +489,13 @@ Glib::RefPtr<Gio::MenuModel> MainWindow::Impl::createSpeedMenu(
 void MainWindow::Impl::onRatioToggled(std::string const& action_name, bool enabled)
 {
     options_actions_->change_action_state(action_name, VariantInt::create(enabled ? 1 : 0));
-    core_->set_pref(TR_KEY_ratio_limit_enabled, enabled);
+    core_->set_pref(TR_KEY_seed_ratio_limited, enabled);
 }
 
 void MainWindow::Impl::onRatioSet(double ratio)
 {
-    core_->set_pref(TR_KEY_ratio_limit, ratio);
-    core_->set_pref(TR_KEY_ratio_limit_enabled, true);
+    core_->set_pref(TR_KEY_seed_ratio_limit, ratio);
+    core_->set_pref(TR_KEY_seed_ratio_limited, true);
 }
 
 Glib::RefPtr<Gio::MenuModel> MainWindow::Impl::createRatioMenu(Glib::RefPtr<Gio::SimpleActionGroup> const& actions)
@@ -585,20 +588,20 @@ void MainWindow::Impl::onOptionsClicked()
 
     update_menu(
         speed_menu_info_[static_cast<uint8_t>(tr_direction::Down)],
-        Speed{ gtr_pref_int_get(TR_KEY_speed_limit_down), Speed::Units::KByps }.to_string(),
+        Speed{ gtr_pref_int_get<size_t>(TR_KEY_speed_limit_down), Speed::Units::KByps }.to_string(),
         TR_KEY_speed_limit_down_enabled);
 
     update_menu(
         speed_menu_info_[static_cast<uint8_t>(tr_direction::Up)],
-        Speed{ gtr_pref_int_get(TR_KEY_speed_limit_up), Speed::Units::KByps }.to_string(),
+        Speed{ gtr_pref_int_get<size_t>(TR_KEY_speed_limit_up), Speed::Units::KByps }.to_string(),
         TR_KEY_speed_limit_up_enabled);
 
     update_menu(
         ratio_menu_info_,
         fmt::format(
-            fmt::runtime(_("Stop at Ratio ({ratio})")),
-            fmt::arg("ratio", tr_strlratio(gtr_pref_double_get(TR_KEY_ratio_limit)))),
-        TR_KEY_ratio_limit_enabled);
+            fmt::runtime(_("Stop at Seed Ratio ({ratio})")),
+            fmt::arg("ratio", tr_strlratio(gtr_pref_double_get(TR_KEY_seed_ratio_limit)))),
+        TR_KEY_seed_ratio_limited);
 }
 
 Glib::RefPtr<Gio::MenuModel> MainWindow::Impl::createStatsMenu()
@@ -614,7 +617,7 @@ Glib::RefPtr<Gio::MenuModel> MainWindow::Impl::createStatsMenu()
     // build the action group
     static auto constexpr Key = TR_KEY_statusbar_stats;
     auto const action_name = "stats-mode"s;
-    auto const current_value = gtr_pref_get<StatsMode>(Key).value_or(DefaultStatsMode);
+    auto const current_value = gtr_pref_get<StatsMode>(Key, DefaultStatsMode);
     auto actions = Gio::SimpleActionGroup::create();
     actions->add_action_radio_integer(
         action_name,
@@ -638,7 +641,7 @@ Glib::RefPtr<Gio::MenuModel> MainWindow::Impl::createStatsMenu()
     {
         auto item = Gio::MenuItem::create(_(display_name), full_action_name);
         item->set_action_and_target(full_action_name, to_var(mode));
-        top->append_item(std::move(item));
+        top->append_item(item);
     }
 
     window_.insert_action_group(std::string(StatsMenuActionGroupName), actions);
@@ -697,7 +700,7 @@ Gtk::SpinButton* MainWindow::Impl::init_spin_button(
     Glib::RefPtr<Gtk::Builder> const& builder)
 {
     auto* button = gtr_get_widget<Gtk::SpinButton>(builder, name);
-    button->set_adjustment(Gtk::Adjustment::create(gtr_pref_int_get(key), low, high, step));
+    button->set_adjustment(Gtk::Adjustment::create(gtr_pref_int_get<int>(key), low, high, step));
     button->set_digits(0);
     button->signal_value_changed().connect([this, button, key]() { spun_cb(*button, key, false); });
     return button;
@@ -751,9 +754,9 @@ MainWindow::Impl::Impl(
 {
     /* make the window */
     window.set_title(Glib::get_application_name());
-    window.set_default_size(gtr_pref_int_get(TR_KEY_main_window_width), gtr_pref_int_get(TR_KEY_main_window_height));
+    window.set_default_size(gtr_pref_int_get<int>(TR_KEY_main_window_width), gtr_pref_int_get<int>(TR_KEY_main_window_height));
 #if !GTKMM_CHECK_VERSION(4, 0, 0)
-    window.move(gtr_pref_int_get(TR_KEY_main_window_x), gtr_pref_int_get(TR_KEY_main_window_y));
+    window.move(gtr_pref_int_get<int>(TR_KEY_main_window_x), gtr_pref_int_get<int>(TR_KEY_main_window_y));
 #endif
 
     if (gtr_pref_flag_get(TR_KEY_main_window_is_maximized))
@@ -817,9 +820,8 @@ MainWindow::Impl::Impl(
 
     tr_sessionSetAltSpeedFunc(
         core_->get_session(),
-        [](tr_session* /*s*/, bool /*isEnabled*/, bool /*byUser*/, gpointer p)
-        { Glib::signal_idle().connect_once([p]() { static_cast<Impl*>(p)->onAltSpeedToggledIdle(); }); },
-        this);
+        [this](bool const /*is_enabled*/, bool const /*by_user*/)
+        { Glib::signal_idle().connect_once([this]() { onAltSpeedToggledIdle(); }); });
 
     refresh();
 
@@ -840,8 +842,8 @@ namespace
 
 void MainWindow::Impl::updateStats()
 {
-    static_assert(StatsModeCount == 4U && "StatsMode changed: update this code");
-    auto const mode = gtr_pref_get<StatsMode>(TR_KEY_statusbar_stats).value_or(DefaultStatsMode);
+    static_assert(StatsModeCount == 4U, "StatsMode changed: update this code");
+    auto const mode = gtr_pref_get<StatsMode>(TR_KEY_statusbar_stats, DefaultStatsMode);
     auto const use_session_stats = mode == StatsMode::SessionRatio || mode == StatsMode::SessionTransfer;
     auto const* const ses = core_->get_session();
     auto const stats = use_session_stats ? tr_sessionGetStats(ses) : tr_sessionGetCumulativeStats(ses);

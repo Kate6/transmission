@@ -11,6 +11,7 @@
 #include <libtransmission-app/app.h>
 
 #include <libtransmission/transmission.h>
+#include <libtransmission/serializer.h>
 #include <libtransmission/utils.h>
 #include <libtransmission/version.h>
 
@@ -46,11 +47,29 @@ Glib::OptionEntry create_option_entry(Glib::ustring const& long_name, gchar shor
     entry.set_description(description);
     return entry;
 }
+
+bool to_ustring(tr_variant const& src, Glib::ustring* tgt)
+{
+    if (auto str = tr::serializer::to_value<std::string>(src))
+    {
+        *tgt = Glib::ustring{ std::move(*str) };
+        return true;
+    }
+
+    return false;
+}
+
+tr_variant from_ustring(Glib::ustring const& ustr)
+{
+    return tr::serializer::to_variant(ustr.raw());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
     tr::app::init();
+    tr::serializer::Converters::add(to_ustring, from_ustring);
 
     /* init i18n */
     bindtextdomain(AppTranslationDomainName, TRANSMISSIONLOCALEDIR);
@@ -66,6 +85,7 @@ int main(int argc, char** argv)
     Gio::File::create_for_path(".");
     Glib::wrap_register(
         g_type_from_name("GLocalFile"),
+        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
         [](GObject* object) -> Glib::ObjectBase* { return new Gio::File(G_FILE(object)); });
     g_type_ensure(Gio::File::get_type());
 
