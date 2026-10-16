@@ -234,7 +234,13 @@ tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppres
         return TR_BAD_SOCKET;
     }
 
-    tr_bindSocketToInterface(fd, session);
+    // fail closed: don't use a socket that isn't bound to the configured interface
+    if (tr_bindSocketToInterface(fd, session) == TR_BAD_SOCKET)
+    {
+        *err_out = EACCES;
+        tr_net_close_socket(fd);
+        return TR_BAD_SOCKET;
+    }
 
     int optval = 1;
     (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<char const*>(&optval), sizeof(optval));
@@ -324,7 +330,12 @@ std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session
         return {};
     }
 
-    tr_bindSocketToInterface(sockfd, session);
+    // fail closed: refuse the connection if it can't be bound to the configured interface
+    if (tr_bindSocketToInterface(sockfd, session) == TR_BAD_SOCKET)
+    {
+        tr_net_close_socket(sockfd);
+        return {};
+    }
 
     // get the address and port,
     // make the socket unblocking,

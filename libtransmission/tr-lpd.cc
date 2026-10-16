@@ -319,9 +319,11 @@ private:
             return false;
         }
 
-        if (bindInterface != nullptr && *bindInterface != '\0')
+        // fail closed: don't use an LPD socket that isn't bound to the configured interface
+        if (bindInterface != nullptr && *bindInterface != '\0' &&
+            setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface)) == -1)
         {
-            (void)setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, bindInterface, strlen(bindInterface));
+            return false;
         }
 
         if (evutil_make_socket_nonblocking(sock) == -1)

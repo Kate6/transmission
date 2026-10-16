@@ -91,8 +91,13 @@ tr_socket_t open_peer_socket(tr_session const& session, tr_socket_address const&
         return TR_BAD_SOCKET;
     }
 
-    // bind the socket to the configured interface (no-op if none was specified)
-    (void)tr_bindSocketToInterface(s, &session);
+    // bind the socket to the configured interface (no-op if none was specified);
+    // fail closed so the connection can't escape through another interface
+    if (tr_bindSocketToInterface(s, &session) == TR_BAD_SOCKET)
+    {
+        tr_net_close_socket(s);
+        return TR_BAD_SOCKET;
+    }
 
     // seeds don't need a big read buffer, so make it smaller
     if (client_is_seed)

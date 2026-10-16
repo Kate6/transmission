@@ -174,14 +174,17 @@ tr_session::tr_udp_core::tr_udp_core(tr_session& session, tr_port udp_port)
     }
     else if (tr_socket_t const sock = socket(PF_INET, SOCK_DGRAM, 0); is_valid_socket(sock))
     {
-        tr_bindSocketToInterface(sock, &session);
-
         (void)evutil_make_listen_socket_reuseable(static_cast<evutil_socket_t>(sock));
 
         auto const addr = session_.bind_address(TR_AF_INET);
         auto const [ss, sslen] = tr_socket_address::to_sockaddr(addr, udp_port_);
 
-        if (evutil_make_socket_nonblocking(static_cast<evutil_socket_t>(sock)) != 0)
+        if (tr_bindSocketToInterface(sock, &session) == TR_BAD_SOCKET)
+        {
+            // fail closed: the helper has already logged the reason
+            tr_net_close_socket(sock);
+        }
+        else if (evutil_make_socket_nonblocking(static_cast<evutil_socket_t>(sock)) != 0)
         {
             auto const error_code = errno;
             tr_logAddWarn(
@@ -234,7 +237,12 @@ tr_session::tr_udp_core::tr_udp_core(tr_session& session, tr_port udp_port)
         auto const addr = session_.bind_address(TR_AF_INET6);
         auto const [ss, sslen] = tr_socket_address::to_sockaddr(addr, udp_port_);
 
-        if (evutil_make_socket_nonblocking(static_cast<evutil_socket_t>(sock)) != 0)
+        if (tr_bindSocketToInterface(sock, &session) == TR_BAD_SOCKET)
+        {
+            // fail closed: the helper has already logged the reason
+            tr_net_close_socket(sock);
+        }
+        else if (evutil_make_socket_nonblocking(static_cast<evutil_socket_t>(sock)) != 0)
         {
             auto const error_code = errno;
             tr_logAddWarn(
