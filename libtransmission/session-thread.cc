@@ -169,18 +169,25 @@ public:
         is_looping_cv_.wait(lock, [this]() { return is_looping_.load(); });
 
         // set up a 5-minute timer that prunes stale log-suppress entries
-        prune_timer_.reset(tr::evhelpers::event_new_pri2(
-            event_base(),
-            -1,
-            0,
-            [](evutil_socket_t, short, void* arg)
-            {
-                auto* const self = static_cast<tr_session_thread_impl*>(arg);
-                tr_logPruneCounts();
-                struct timeval tv = { 300, 0 };
-                event_add(self->prune_timer_.get(), &tv);
-            },
-            this));
+        prune_timer_.reset(
+            tr::evhelpers::event_new_pri2(
+                event_base(),
+                -1,
+                0,
+                [](evutil_socket_t, short, void* arg)
+                {
+                    auto* const self = static_cast<tr_session_thread_impl*>(arg);
+                    tr_logPruneCounts();
+                    // `prune_timer_` is reset in ~tr_session_thread_impl() to stop the
+                    // shutdown event loop from waiting on a pending timer, so it may
+                    // already be gone by the time this callback runs.
+                    if (self->prune_timer_)
+                    {
+                        struct timeval tv = { 300, 0 };
+                        event_add(self->prune_timer_.get(), &tv);
+                    }
+                },
+                this));
         {
             struct timeval tv = { 300, 0 };
             event_add(prune_timer_.get(), &tv);
@@ -196,6 +203,12 @@ public:
     {
         TR_ASSERT(!am_in_session_thread());
         TR_ASSERT(is_looping_);
+
+        // Stop the log-suppress prune timer. It's the only event that outlives
+        // the components closed in tr_session::closeImplPart1()/closeImplPart2(),
+        // and a pending timer would keep the shutdown event loop below alive
+        // until it fires (up to 5 minutes), making thread_.join() hang.
+        prune_timer_.reset();
 
         // Stop the first event loop. This is the steady-state loop that runs
         // continuously, even when there are no events. See: session_thread_func()

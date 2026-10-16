@@ -9,7 +9,7 @@
 #include <csignal>
 #include <cstddef> // size_t
 #include <cstdint>
-#include <cstdlib> // std::_Exit, EXIT_SUCCESS
+#include <cstdlib> // std::_Exit, EXIT_FAILURE
 #include <ctime>
 #include <future>
 #include <iterator> // for std::back_inserter
@@ -1684,13 +1684,25 @@ void tr_sessionClose(tr_session* session, double const timeout_secs)
                                    { session->closeImplPart1(&closed_promise, deadline); });
 
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
-    (void)closed_future.wait_for(std::chrono::milliseconds{ static_cast<int64_t>(timeout_secs * 2000.0) });
+    if (closed_future.wait_for(std::chrono::milliseconds{ static_cast<int64_t>(timeout_secs * 2000.0) }) ==
+        std::future_status::ready)
+    {
+        // closeImplPart2() has finished tearing the session down, so joining
+        // the session thread here is quick.
+        delete session;
+        return;
+    }
 
-    // Either way, we must not `delete session` here — deleting it would join the
-    // session thread (via ~tr_session_thread_impl), which hangs if a callback is
-    // stuck in the event loop. Instead we let the OS reclaim everything on exit.
+    // Last resort: the session thread is wedged, so we must not `delete session`
+    // here — that would join the session thread (via ~tr_session_thread_impl),
+    // which hangs if a callback is stuck in the event loop. Log it and let the
+    // OS reclaim everything on exit instead.
+    tr_logAddWarn(
+        fmt::format(
+            "Session shutdown timed out after {} seconds; exiting without cleanup",
+            static_cast<int>(timeout_secs * 2.0)));
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
-    std::_Exit(EXIT_SUCCESS);
+    std::_Exit(EXIT_FAILURE);
 }
 
 namespace
