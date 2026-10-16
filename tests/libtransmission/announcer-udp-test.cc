@@ -86,6 +86,11 @@ protected:
             return {};
         }
 
+        [[nodiscard]] bool has_ip_protocol(tr_address_type /*type*/) const override
+        {
+            return true;
+        }
+
         // Mock DNS lookup that only resolves localhost
         [[nodiscard]] std::optional<tr_socket_address> dns_lookup(
             tr_address_type const ip_protocol,

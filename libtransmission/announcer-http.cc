@@ -303,21 +303,40 @@ void tr_tracker_http_announce(
             options.url += format_ip_arg(session->announceIP());
         }
 
+        // don't let libcurl pick a disabled IP protocol
+        if (!session->has_ip_protocol(TR_AF_INET6) && session->has_ip_protocol(TR_AF_INET))
+        {
+            options.ip_proto = tr_web::FetchOptions::IPProtocol::V4;
+        }
+
+        d->requests_sent_count = 1;
+        do_make_request(""sv, std::move(options));
+    }
+    else if (!session->has_ip_protocol(TR_AF_INET) && !session->has_ip_protocol(TR_AF_INET6))
+    {
+        // can't happen in practice; fall back to letting libcurl decide
         d->requests_sent_count = 1;
         do_make_request(""sv, std::move(options));
     }
     else
     {
-        d->requests_sent_count = 2;
+        d->requests_sent_count = (session->has_ip_protocol(TR_AF_INET) ? 1U : 0U) +
+            (session->has_ip_protocol(TR_AF_INET6) ? 1U : 0U);
 
         // First try to send the announce via IPv4
-        auto ipv4_options = options;
-        ipv4_options.ip_proto = tr_web::FetchOptions::IPProtocol::V4;
-        do_make_request("IPv4"sv, std::move(ipv4_options));
+        if (session->has_ip_protocol(TR_AF_INET))
+        {
+            auto ipv4_options = options;
+            ipv4_options.ip_proto = tr_web::FetchOptions::IPProtocol::V4;
+            do_make_request("IPv4"sv, std::move(ipv4_options));
+        }
 
         // Then try to send via IPv6
-        options.ip_proto = tr_web::FetchOptions::IPProtocol::V6;
-        do_make_request("IPv6"sv, std::move(options));
+        if (session->has_ip_protocol(TR_AF_INET6))
+        {
+            options.ip_proto = tr_web::FetchOptions::IPProtocol::V6;
+            do_make_request("IPv6"sv, std::move(options));
+        }
     }
 }
 

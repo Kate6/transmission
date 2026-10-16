@@ -138,6 +138,7 @@ public:
     public:
         virtual ~Mediator() noexcept = default;
         virtual void sendto(void const* buf, size_t buflen, sockaddr const* addr, socklen_t addrlen) = 0;
+        [[nodiscard]] virtual bool has_ip_protocol(tr_address_type type) const = 0;
         [[nodiscard]] virtual std::optional<tr_address> announce_ip() const = 0;
         [[nodiscard]] virtual std::optional<tr_socket_address> dns_lookup(
             tr_address_type ip_protocol,

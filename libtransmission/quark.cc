@@ -261,6 +261,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "ip_protocol"sv, // rpc
     "ipv4"sv, // BEP0010; BT protocol, rpc
     "ipv6"sv, // BEP0010; BT protocol, rpc
+    "ipv6_enabled"sv, // rpc, tr_session::Settings
     "isBackup"sv, // rpc
     "isDownloadingFrom"sv, // rpc
     "isEncrypted"sv, // rpc

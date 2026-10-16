@@ -95,6 +95,10 @@ public:
     void update_global_addr(tr_address_type type) noexcept;
     void update_source_addr(tr_address_type type) noexcept;
 
+    // Enables or disables the use of this IP protocol,
+    // e.g. when the user turns it off in the settings
+    void set_ip_protocol_enabled(tr_address_type type, bool enabled) noexcept;
+
     // Only use as a callback for web_->fetch()
     void on_response_ip_query(tr_address_type type, tr_web::FetchResponse const& response) noexcept;
 

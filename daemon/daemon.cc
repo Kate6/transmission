@@ -87,7 +87,7 @@ static_assert(TrDefaultPeerPort == 51413, "update 'peerport' desc");
 static_assert(TrDefaultPeerLimitTorrent == 50, "update 'peerlimit-torrent' desc");
 static_assert(TrDefaultPeerLimitGlobal == 200, "update 'peerlimit-global' desc");
 static_assert(TrDefaultRpcPort == 9091 && R"(update "port" desc)");
-auto constexpr Options = std::array<tr_option, 48>{ {
+auto constexpr Options = std::array<tr_option, 49>{ {
     { 'a', "allowed", "Allowed IP addresses. (Default: '127.0.0.1,::1')", "a", Arg::Required, "<list>" },
     { 'b', "blocklist", "Enable peer blocklists", "b", Arg::None, nullptr },
     { 'B', "no-blocklist", "Disable peer blocklists", "B", Arg::None, nullptr },
@@ -139,6 +139,7 @@ auto constexpr Options = std::array<tr_option, 48>{ {
     { 912, "encryption-tolerated", "Prefer unencrypted peer connections", "et", Arg::None, nullptr },
     { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", Arg::Required, "<ipv4 addr>" },
     { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", Arg::Required, "<ipv6 addr>" },
+    { 955, "no-ipv6", "Don't use IPv6 at all", nullptr, Arg::None, nullptr },
     { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", Arg::Required, "<ip addr>" },
     { 953,
       "global-seedratio",
@@ -210,11 +211,12 @@ auto onFileAdded(tr_session* session, std::string_view dirname, std::string_view
         auto error = tr_error{};
         if (!tr_file_read(filename, content, &error))
         {
-            tr_logAddWarn(fmt::format(
-                fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
-                fmt::arg("path", basename),
-                fmt::arg("error", error.message()),
-                fmt::arg("error_code", error.code())));
+            tr_logAddWarn(
+                fmt::format(
+                    fmt::runtime(_("Couldn't read '{path}': {error} ({error_code})")),
+                    fmt::arg("path", basename),
+                    fmt::arg("error", error.message()),
+                    fmt::arg("error_code", error.code())));
             retry = true;
         }
         else
@@ -248,11 +250,12 @@ auto onFileAdded(tr_session* session, std::string_view dirname, std::string_view
 
             if (auto error = tr_error{}; !tr_sys_path_remove(filename, &error))
             {
-                tr_logAddError(fmt::format(
-                    fmt::runtime(_("Couldn't remove '{path}': {error} ({error_code})")),
-                    fmt::arg("path", basename),
-                    fmt::arg("error", error.message()),
-                    fmt::arg("error_code", error.code())));
+                tr_logAddError(
+                    fmt::format(
+                        fmt::runtime(_("Couldn't remove '{path}': {error} ({error_code})")),
+                        fmt::arg("path", basename),
+                        fmt::arg("error", error.message()),
+                        fmt::arg("error_code", error.code())));
             }
         }
         else
@@ -684,6 +687,10 @@ bool tr_daemon::parse_args(int argc, char const* const* argv, bool* dump_setting
             map->insert_or_assign(TR_KEY_bind_address_ipv6, optstr);
             break;
 
+        case 955:
+            map->insert_or_assign(TR_KEY_ipv6_enabled, false);
+            break;
+
         case 'r':
             map->insert_or_assign(TR_KEY_rpc_bind_address, optstr);
             break;
@@ -782,10 +789,11 @@ void tr_daemon::reconfigure()
         {
             auto error = tr_error{};
             error.set_from_errno(errno);
-            tr_logAddError(fmt::format(
-                fmt::runtime(_("Failed to reload: Failed to get current monotonic time: {errmsg} ({errno})")),
-                fmt::arg("errmsg", error.message()),
-                fmt::arg("errno", error.code())));
+            tr_logAddError(
+                fmt::format(
+                    fmt::runtime(_("Failed to reload: Failed to get current monotonic time: {errmsg} ({errno})")),
+                    fmt::arg("errmsg", error.message()),
+                    fmt::arg("errno", error.code())));
             return;
         }
 
@@ -894,11 +902,12 @@ int tr_daemon::start([[maybe_unused]] bool foreground)
         }
         else
         {
-            tr_logAddError(fmt::format(
-                fmt::runtime(_("Couldn't save '{path}': {error} ({error_code})")),
-                fmt::arg("path", pid_filename),
-                fmt::arg("error", error.message()),
-                fmt::arg("error_code", error.code())));
+            tr_logAddError(
+                fmt::format(
+                    fmt::runtime(_("Couldn't save '{path}': {error} ({error_code})")),
+                    fmt::arg("path", pid_filename),
+                    fmt::arg("error", error.message()),
+                    fmt::arg("error_code", error.code())));
         }
     }
 
@@ -967,20 +976,22 @@ int tr_daemon::start([[maybe_unused]] bool foreground)
         if (status_ev == nullptr)
         {
             auto const error_code = errno;
-            tr_logAddError(fmt::format(
-                fmt::runtime(_("Couldn't create event: {error} ({error_code})")),
-                fmt::arg("error", tr_strerror(error_code)),
-                fmt::arg("error_code", error_code)));
+            tr_logAddError(
+                fmt::format(
+                    fmt::runtime(_("Couldn't create event: {error} ({error_code})")),
+                    fmt::arg("error", tr_strerror(error_code)),
+                    fmt::arg("error_code", error_code)));
             goto CLEANUP;
         }
 
         if (event_add(status_ev, &one_sec) == -1)
         {
             auto const error_code = errno;
-            tr_logAddError(fmt::format(
-                fmt::runtime(_("Couldn't add event: {error} ({error_code})")),
-                fmt::arg("error", tr_strerror(error_code)),
-                fmt::arg("error_code", error_code)));
+            tr_logAddError(
+                fmt::format(
+                    fmt::runtime(_("Couldn't add event: {error} ({error_code})")),
+                    fmt::arg("error", tr_strerror(error_code)),
+                    fmt::arg("error_code", error_code)));
             goto CLEANUP;
         }
     }
@@ -991,10 +1002,11 @@ int tr_daemon::start([[maybe_unused]] bool foreground)
     if (event_base_dispatch(ev_base_) == -1)
     {
         auto const error_code = errno;
-        tr_logAddError(fmt::format(
-            fmt::runtime(_("Couldn't launch daemon event loop: {error} ({error_code})")),
-            fmt::arg("error", tr_strerror(error_code)),
-            fmt::arg("error_code", error_code)));
+        tr_logAddError(
+            fmt::format(
+                fmt::runtime(_("Couldn't launch daemon event loop: {error} ({error_code})")),
+                fmt::arg("error", tr_strerror(error_code)),
+                fmt::arg("error_code", error_code)));
         goto CLEANUP;
     }
 

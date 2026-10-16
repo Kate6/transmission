@@ -53,7 +53,7 @@ char const* torrentPath = nullptr;
 using Arg = tr_option::Arg;
 static_assert(TrDefaultPeerPort == 51413, "update 'port' desc");
 static_assert(TrDefaultPeerSocketTos == "le", "update 'tos' desc");
-auto constexpr Options = std::array<tr_option, 28>{ {
+auto constexpr Options = std::array<tr_option, 29>{ {
     { 'b', "blocklist", "Enable peer blocklists", "b", Arg::None, nullptr },
     { 'B', "no-blocklist", "Disable peer blocklists", "B", Arg::None, nullptr },
     { 'd', "downlimit", "Set max download speed in " SPEED_K_STR, "d", Arg::Required, "<speed>" },
@@ -86,6 +86,7 @@ auto constexpr Options = std::array<tr_option, 28>{ {
     { 's', "stalled-minutes", "Minutes with no data before failing", "s", Arg::Required, "<minutes>" },
     { 600, "bind-interface", "Bind to specific interface", "inf", Arg::Required, "<interface>" },
     { 601, "ban-choking-peers", "Drop and temp-ban peers that choke us", "bch", Arg::None, nullptr },
+    { 602, "no-ipv6", "Don't use IPv6 at all", nullptr, Arg::None, nullptr },
 
     { 0, nullptr, nullptr, nullptr, Arg::None, nullptr },
 } };
@@ -301,6 +302,10 @@ int parseCommandLine(tr_variant::Map& map, int argc, char const** argv)
 
         case 601:
             map[TR_KEY_ban_choking_peers] = true;
+            break;
+
+        case 602:
+            map[TR_KEY_ipv6_enabled] = false;
             break;
 
         case 'w':

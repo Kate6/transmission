@@ -151,6 +151,11 @@ private:
             session_.udp_core_->sendto(buf, buflen, addr, addrlen);
         }
 
+        [[nodiscard]] bool has_ip_protocol(tr_address_type type) const override
+        {
+            return session_.has_ip_protocol(type);
+        }
+
         [[nodiscard]] std::optional<tr_address> announce_ip() const override
         {
             if (!session_.useAnnounceIP())
@@ -303,6 +308,11 @@ private:
         [[nodiscard]] bool allowsLPD() const override
         {
             return session_.allowsLPD();
+        }
+
+        [[nodiscard]] bool has_ip_protocol(tr_address_type type) const override
+        {
+            return session_.has_ip_protocol(type);
         }
 
         [[nodiscard]] tr::TimerMaker& timerMaker() override

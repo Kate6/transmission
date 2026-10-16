@@ -87,6 +87,7 @@ public:
     bool download_queue_enabled = true;
     bool idle_seeding_limit_enabled = false;
     bool incomplete_dir_enabled = false;
+    bool ipv6_enabled = true;
     bool is_incomplete_file_naming_enabled = true;
     bool lpd_enabled = true;
     bool peer_port_random_on_start = false;
@@ -178,6 +179,7 @@ public:
         Field<&SessionSettings::incomplete_dir_enabled>{ TR_KEY_incomplete_dir_enabled },
         Field<&SessionSettings::ip_endpoint_ipv4>{ TR_KEY_ip_endpoints_ipv4 },
         Field<&SessionSettings::ip_endpoint_ipv6>{ TR_KEY_ip_endpoints_ipv6 },
+        Field<&SessionSettings::ipv6_enabled>{ TR_KEY_ipv6_enabled },
         Field<&SessionSettings::lpd_enabled>{ TR_KEY_lpd_enabled },
         Field<&SessionSettings::log_level>{ TR_KEY_message_level },
         Field<&SessionSettings::peer_congestion_algorithm>{ TR_KEY_peer_congestion_algorithm },

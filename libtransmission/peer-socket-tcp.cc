@@ -85,6 +85,12 @@ tr_socket_t open_peer_socket(tr_session const& session, tr_socket_address const&
         return TR_BAD_SOCKET;
     }
 
+    // fail closed: don't open connections to a disabled IP protocol
+    if (!session.has_ip_protocol(addr.type))
+    {
+        return TR_BAD_SOCKET;
+    }
+
     auto const s = create_socket(tr_ip_protocol_to_af(addr.type));
     if (!is_valid_socket(s))
     {

@@ -49,6 +49,11 @@ public:
         return ret;
     }
 
+    [[nodiscard]] bool has_ip_protocol(tr_address_type /*type*/) const override
+    {
+        return true;
+    }
+
     [[nodiscard]] tr_port port() const override
     {
         return port_;

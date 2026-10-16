@@ -228,6 +228,32 @@ void tr_ip_cache::update_addr(tr_address_type type) noexcept
     }
 }
 
+void tr_ip_cache::set_ip_protocol_enabled(tr_address_type const type, bool const enabled) noexcept
+{
+    TR_ASSERT(type < NUM_TR_AF_INET_TYPES);
+
+    auto const protocol = tr_ip_protocol_to_sv(type);
+    auto& has_ip_protocol = has_ip_protocol_[type];
+
+    if (enabled)
+    {
+        if (!has_ip_protocol)
+        {
+            // NB: update_addr() re-detects whether the machine actually supports this protocol
+            has_ip_protocol = true;
+            start_timer(type, UpkeepInterval);
+            update_addr(type);
+        }
+    }
+    else if (has_ip_protocol)
+    {
+        has_ip_protocol = false;
+        stop_timer(type);
+        unset_addr(type);
+        tr_logAddInfo(fmt::format(fmt::runtime(_("Disabled {protocol} by user setting")), fmt::arg("protocol", protocol)));
+    }
+}
+
 void tr_ip_cache::update_global_addr(tr_address_type const type) noexcept
 {
     TR_ASSERT(type < NUM_TR_AF_INET_TYPES);

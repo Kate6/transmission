@@ -458,6 +458,12 @@ struct tau_tracker
         {
             auto const ipp_enum = static_cast<tr_address_type>(ipp);
 
+            // don't use a disabled IP protocol
+            if (!mediator_.has_ip_protocol(ipp_enum))
+            {
+                continue;
+            }
+
             // update the addr if our lookup is past its shelf date
             if (auto& dns = addr_pending_dns_[ipp]; !dns && addr_expires_at_[ipp] <= now)
             {

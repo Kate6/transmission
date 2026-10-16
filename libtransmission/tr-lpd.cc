@@ -277,7 +277,8 @@ private:
             --n_success;
         }
 
-        if (!initImpl<TR_AF_INET6>(event_base, bindInterface))
+        // silently skip an IP protocol that is disabled or unsupported
+        if (mediator_.has_ip_protocol(TR_AF_INET6) && !initImpl<TR_AF_INET6>(event_base, bindInterface))
         {
             auto const err = sockerrno;
             tr_net_close_socket(mcast_sockets_[TR_AF_INET6]);

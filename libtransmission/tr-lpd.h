@@ -41,6 +41,8 @@ public:
 
         [[nodiscard]] virtual tr_address bind_address(tr_address_type type) const = 0;
 
+        [[nodiscard]] virtual bool has_ip_protocol(tr_address_type type) const = 0;
+
         [[nodiscard]] virtual tr_port port() const = 0;
 
         [[nodiscard]] virtual bool allowsLPD() const = 0;

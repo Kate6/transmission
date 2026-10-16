@@ -950,11 +950,17 @@ void tr_session::setSettings(tr_session::Settings&& settings_in, bool force)
     }
 #endif
 
+    if (auto const& val = new_settings.ipv6_enabled; force || val != old_settings.ipv6_enabled)
+    {
+        ip_cache_->set_ip_protocol_enabled(TR_AF_INET6, val);
+    }
+
     if (auto const& val = new_settings.bind_address_ipv4; force || val != old_settings.bind_address_ipv4)
     {
         ip_cache_->update_addr(TR_AF_INET);
     }
-    if (auto const& val = new_settings.bind_address_ipv6; force || val != old_settings.bind_address_ipv6)
+    if (auto const& val = new_settings.bind_address_ipv6;
+        new_settings.ipv6_enabled && (force || val != old_settings.bind_address_ipv6))
     {
         ip_cache_->update_addr(TR_AF_INET6);
     }
@@ -988,11 +994,20 @@ void tr_session::setSettings(tr_session::Settings&& settings_in, bool force)
             addr_changed = true;
         }
 
-        if (auto const& val = new_settings.bind_address_ipv6; force || port_changed || val != old_settings.bind_address_ipv6)
+        bool const ipv6_changed = force || new_settings.ipv6_enabled != old_settings.ipv6_enabled;
+        if (auto const& val = new_settings.bind_address_ipv6;
+            ipv6_changed || port_changed || val != old_settings.bind_address_ipv6)
         {
-            //printf("rebinding ipv6\n");
-            auto const addr = bind_address(TR_AF_INET6);
-            bound_ipv6_.emplace(event_base(), addr, local_peer_port_, &tr_session::onIncomingPeerConnection, this);
+            if (new_settings.ipv6_enabled)
+            {
+                //printf("rebinding ipv6\n");
+                auto const addr = bind_address(TR_AF_INET6);
+                bound_ipv6_.emplace(event_base(), addr, local_peer_port_, &tr_session::onIncomingPeerConnection, this);
+            }
+            else
+            {
+                bound_ipv6_.reset();
+            }
             addr_changed = true;
         }
     }
