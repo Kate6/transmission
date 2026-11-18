@@ -286,7 +286,10 @@ void tr_tracker_http_announce(
     auto do_make_request = [&](std::string_view const& protocol_name, tr_web::FetchOptions&& opt)
     {
         tr_logAddTrace(fmt::format("Sending {} announce to libcurl: '{}'", protocol_name, opt.url), request.log_name);
-        session->fetch(std::move(opt));
+        if (session->fetch(std::move(opt)))
+        {
+            ++d->requests_sent_count;
+        }
     };
 
     /*
@@ -309,20 +312,15 @@ void tr_tracker_http_announce(
             options.ip_proto = tr_web::FetchOptions::IPProtocol::V4;
         }
 
-        d->requests_sent_count = 1;
         do_make_request(""sv, std::move(options));
     }
     else if (!session->has_ip_protocol(TR_AF_INET) && !session->has_ip_protocol(TR_AF_INET6))
     {
         // can't happen in practice; fall back to letting libcurl decide
-        d->requests_sent_count = 1;
         do_make_request(""sv, std::move(options));
     }
     else
     {
-        d->requests_sent_count = (session->has_ip_protocol(TR_AF_INET) ? 1U : 0U) +
-            (session->has_ip_protocol(TR_AF_INET6) ? 1U : 0U);
-
         // First try to send the announce via IPv4
         if (session->has_ip_protocol(TR_AF_INET))
         {
@@ -337,6 +335,13 @@ void tr_tracker_http_announce(
             options.ip_proto = tr_web::FetchOptions::IPProtocol::V6;
             do_make_request("IPv6"sv, std::move(options));
         }
+    }
+
+    if (d->requests_sent_count == 0U)
+    {
+        // All fetches were rejected, e.g. because the session is shutting
+        // down. Their callbacks will never run, so clean up now.
+        delete d;
     }
 }
 
@@ -578,7 +583,12 @@ void tr_tracker_http_scrape(tr_session const* session, tr_scrape_request const& 
     options.timeout_secs = TrScrapeTimeoutSec;
     options.sndbuf = 4096;
     options.rcvbuf = 4096;
-    session->fetch(std::move(options));
+    if (!session->fetch(std::move(options)))
+    {
+        // The fetch was rejected, e.g. because the session is shutting down.
+        // The callback will never run, so clean up now.
+        delete d;
+    }
 }
 
 void tr_announcerParseHttpScrapeResponse(tr_scrape_response& response, std::string_view benc, std::string_view log_name)

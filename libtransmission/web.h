@@ -93,7 +93,15 @@ public:
         static auto constexpr DefaultTimeoutSecs = std::chrono::seconds{ 120 };
     };
 
-    void fetch(FetchOptions&& options);
+    /**
+     * Queue a new fetch task.
+     *
+     * @return true if the task was accepted. Returns false if the task was
+     * rejected, e.g. because shutdown has already begun. If false is
+     * returned, `options.done_func` will never be called and the caller
+     * is responsible for cleaning up `options.done_func_user_data`.
+     */
+    [[nodiscard]] bool fetch(FetchOptions&& options);
 
     // Notify tr_web that it's going to be destroyed soon.
     // New fetch() tasks will be rejected, but already-running tasks
@@ -182,4 +190,12 @@ private:
     explicit tr_web(Mediator& mediator);
 };
 
-void tr_sessionFetch(struct tr_session* session, tr_web::FetchOptions&& options);
+/**
+ * Queue a new fetch task on `session`.
+ *
+ * @return true if the task was accepted. Returns false if the task was
+ * rejected, e.g. because the session is shutting down. If false is
+ * returned, `options.done_func` will never be called and the caller is
+ * responsible for cleaning up `options.done_func_user_data`.
+ */
+[[nodiscard]] bool tr_sessionFetch(struct tr_session* session, tr_web::FetchOptions&& options);

@@ -340,7 +340,9 @@ private:
 
         void fetch(tr_web::FetchOptions&& options) override
         {
-            session_.fetch(std::move(options));
+            // The fetch callback for IP queries owns no heap data, so it's
+            // safe to drop the request if e.g. the session is shutting down.
+            (void)session_.fetch(std::move(options));
         }
 
         [[nodiscard]] std::string_view settings_bind_addr(tr_address_type type) override
@@ -669,6 +671,26 @@ public:
     }
 
     // bandwidth
+
+    static auto constexpr MaxBandwidthGroups = size_t{ 1000 };
+
+    [[nodiscard]] bool hasBandwidthGroup(std::string_view name) const noexcept
+    {
+        for (auto const& [group_name, group] : bandwidth_groups_)
+        {
+            if (group_name == name)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] bool canAddBandwidthGroup(std::string_view name) const noexcept
+    {
+        return hasBandwidthGroup(name) || bandwidth_groups_.size() < MaxBandwidthGroups;
+    }
 
     [[nodiscard]] tr_bandwidth& getBandwidthGroup(std::string_view name);
 
@@ -1047,12 +1069,9 @@ public:
     void verify_add(tr_torrent* tor);
     void verify_remove(tr_torrent const* tor);
 
-    void fetch(tr_web::FetchOptions&& options) const
+    [[nodiscard]] bool fetch(tr_web::FetchOptions&& options) const
     {
-        if (web_)
-        {
-            web_->fetch(std::move(options));
-        }
+        return web_ && web_->fetch(std::move(options));
     }
 
     [[nodiscard]] constexpr auto const& bandwidthGroups() const noexcept

@@ -1923,10 +1923,16 @@ void tr_torrent::set_bandwidth_group(std::string_view group_name) noexcept
         this->bandwidth_group_ = tr_interned_string{};
         this->bandwidth().set_parent(&this->session->top_bandwidth_);
     }
-    else
+    else if (this->session->canAddBandwidthGroup(group_name))
     {
         this->bandwidth_group_ = group_name;
         this->bandwidth().set_parent(&this->session->getBandwidthGroup(group_name));
+    }
+    else
+    {
+        // We're at the bandwidth group limit and this group doesn't exist.
+        // Leave the torrent's current group alone.
+        return;
     }
 
     this->set_dirty();

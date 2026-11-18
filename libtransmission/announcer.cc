@@ -171,6 +171,21 @@ public:
         return &it->second;
     }
 
+    [[nodiscard]] tr_scrape_info* find_scrape_info(tr_interned_string url)
+    {
+        if (std::empty(url))
+        {
+            return nullptr;
+        }
+
+        auto const it = scrape_info_.find(url);
+        return it == std::end(scrape_info_) ? nullptr : &it->second;
+    }
+
+    // Remove scrape_info entries that are no longer referenced by any
+    // live tracker, e.g. after their torrent has been removed.
+    void prune_scrape_info();
+
     void scrape(tr_scrape_request const& request, tr_scrape_response_func on_response)
     {
         TR_ASSERT(!is_shutting_down_);
@@ -1228,6 +1243,35 @@ void tr_announcer_impl::removeTorrent(tr_torrent* tor)
 
     tor->torrent_announcer = nullptr;
     delete ta;
+
+    prune_scrape_info();
+}
+
+void tr_announcer_impl::prune_scrape_info()
+{
+    auto in_use = std::set<tr_scrape_info const*>{};
+
+    for (auto const* const tor : session->torrents())
+    {
+        auto const* const ta = tor->torrent_announcer;
+        if (ta == nullptr)
+        {
+            continue;
+        }
+
+        for (auto const& tier : ta->tiers)
+        {
+            for (auto const& tracker : tier.trackers)
+            {
+                if (tracker.scrape_info != nullptr)
+                {
+                    in_use.insert(tracker.scrape_info);
+                }
+            }
+        }
+    }
+
+    std::erase_if(scrape_info_, [&in_use](auto const& item) { return !in_use.contains(&item.second); });
 }
 
 // --- SCRAPE
@@ -1284,7 +1328,7 @@ void checkMultiscrapeMax(tr_announcer_impl* announcer, tr_scrape_response const&
     }
 
     auto const& url = response.scrape_url;
-    auto* const scrape_info = announcer->scrape_info(url);
+    auto* const scrape_info = announcer->find_scrape_info(url);
     if (scrape_info == nullptr)
     {
         return;
@@ -1827,4 +1871,6 @@ void tr_announcer_impl::resetTorrent(tr_torrent* tor)
     }
 
     delete older;
+
+    prune_scrape_info();
 }

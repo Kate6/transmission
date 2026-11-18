@@ -1292,7 +1292,16 @@ namespace make_torrent_field_helpers
 
         if (auto const val = args_in.value_if<std::string_view>(TR_KEY_group))
         {
-            tor->set_bandwidth_group(*val);
+            auto const name = tr_strv_strip(*val);
+            if (session->canAddBandwidthGroup(name))
+            {
+                tor->set_bandwidth_group(name);
+            }
+            else
+            {
+                err = Error::INVALID_PARAMS;
+                errmsg = fmt::format("Too many bandwidth groups (maximum: {})", tr_session::MaxBandwidthGroups);
+            }
         }
 
         if (auto const* val = args_in.find_if<tr_variant::Vector>(TR_KEY_labels); val != nullptr && err == Error::SUCCESS)
@@ -1559,7 +1568,12 @@ void portTest(tr_session* session, tr_variant::Map const& args_in, struct tr_rpc
     {
         options.ip_proto = *ip_proto;
     }
-    session->fetch(std::move(options));
+    if (!session->fetch(std::move(options)))
+    {
+        // The fetch was rejected, e.g. because the session is shutting down.
+        // The callback will never run, so clean up without responding.
+        delete idle_data;
+    }
 }
 
 // ---
@@ -1655,11 +1669,17 @@ void onBlocklistFetched(tr_web::FetchResponse const& web_response)
 
 void blocklistUpdate(tr_session* session, tr_variant::Map const& /*args_in*/, struct tr_rpc_idle_data* idle_data)
 {
-    session->fetch({
-        session->blocklistUrl(),
-        [](tr_web::FetchResponse const& r) { onBlocklistFetched(r); },
-        idle_data,
-    });
+    if (!session->fetch(
+            {
+                session->blocklistUrl(),
+                [](tr_web::FetchResponse const& r) { onBlocklistFetched(r); },
+                idle_data,
+            }))
+    {
+        // The fetch was rejected, e.g. because the session is shutting down.
+        // The callback will never run, so clean up without responding.
+        delete idle_data;
+    }
 }
 
 // ---
@@ -1873,7 +1893,13 @@ void torrentAdd(tr_session* session, tr_variant::Map const& args_in, tr_rpc_idle
             d,
         };
         options.cookies = cookies;
-        session->fetch(std::move(options));
+        if (!session->fetch(std::move(options)))
+        {
+            // The fetch was rejected, e.g. because the session is shutting down.
+            // The callback will never run, so clean up without responding.
+            delete d;
+            delete idle_data;
+        }
         return;
     }
 
@@ -1963,6 +1989,14 @@ void add_strings_from_var(std::set<std::string_view>& strings, tr_variant const&
     if (std::empty(name))
     {
         return { Error::INVALID_PARAMS, "No group name given"s };
+    }
+
+    if (!session->canAddBandwidthGroup(name))
+    {
+        return {
+            Error::INVALID_PARAMS,
+            fmt::format("Too many bandwidth groups (maximum: {})", tr_session::MaxBandwidthGroups),
+        };
     }
 
     auto& group = session->getBandwidthGroup(name);

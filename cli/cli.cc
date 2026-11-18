@@ -438,7 +438,14 @@ int tr_main(int argc, char* argv[])
     else if (tr_urlIsValid(torrentPath))
     {
         // fetch it
-        tr_sessionFetch(h, { torrentPath, onTorrentFileDownloaded, ctor });
+        if (!tr_sessionFetch(h, { torrentPath, onTorrentFileDownloaded, ctor }))
+        {
+            fprintf(stderr, "ERROR: Couldn't fetch torrent \"%s\".\n", torrentPath);
+            tr_ctorFree(ctor);
+            tr_sessionClose(h);
+            return EXIT_FAILURE;
+        }
+
         waitingOnWeb = true;
         while (waitingOnWeb)
         {

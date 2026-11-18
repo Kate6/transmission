@@ -93,6 +93,19 @@ TEST_F(WebTest, startShutdownThenDestroyDoesNotHang)
         });
 }
 
+TEST_F(WebTest, fetchIsRejectedAfterShutdown)
+{
+    auto mediator = tr_web::Mediator{};
+    auto const web = tr_web::create(mediator);
+    web->startShutdown(0ms);
+
+    auto called = false;
+    auto const accepted = web->fetch(
+        { "http://example.com/"sv, [&called](tr_web::FetchResponse const&) { called = true; }, nullptr, 1s });
+    EXPECT_FALSE(accepted);
+    EXPECT_FALSE(called);
+}
+
 TEST_F(WebTest, destroyWithTaskInFlightDoesNotHang)
 {
     // A tr_web with work in flight takes the other path out of the loop,
@@ -105,7 +118,7 @@ TEST_F(WebTest, destroyWithTaskInFlightDoesNotHang)
 
             // TEST-NET-1 (RFC 5737) has no route, so this fetch is still
             // in flight when the tr_web is destroyed.
-            web->fetch({ "http://192.0.2.1/"sv, [](tr_web::FetchResponse const&) {}, nullptr, 60s });
+            (void)web->fetch({ "http://192.0.2.1/"sv, [](tr_web::FetchResponse const&) {}, nullptr, 60s });
             ++n_done;
         });
 }

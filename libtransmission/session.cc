@@ -106,7 +106,14 @@ void bandwidthGroupRead(tr_session* session, std::string_view config_dir)
             continue;
         }
 
-        auto& group = session->getBandwidthGroup(tr_interned_string{ key });
+        auto const name = tr_interned_string{ key };
+        if (!session->canAddBandwidthGroup(name.sv()))
+        {
+            tr_logAddWarn("Ignoring bandwidth group from settings file: too many groups");
+            continue;
+        }
+
+        auto& group = session->getBandwidthGroup(name);
         auto limits = tr_bandwidth_limits{};
 
         if (auto const val = group_map->value_if<bool>(TR_KEY_upload_limited); val)
@@ -372,9 +379,9 @@ std::chrono::steady_clock::time_point tr_session::WebMediator::now() const
     return std::chrono::steady_clock::now();
 }
 
-void tr_sessionFetch(tr_session* session, tr_web::FetchOptions&& options)
+bool tr_sessionFetch(tr_session* session, tr_web::FetchOptions&& options)
 {
-    session->fetch(std::move(options));
+    return session->fetch(std::move(options));
 }
 
 // ---
@@ -1967,6 +1974,13 @@ tr_bandwidth& tr_session::getBandwidthGroup(std::string_view name)
         {
             return *group;
         }
+    }
+
+    if (groups.size() >= MaxBandwidthGroups)
+    {
+        // Defensive fallback: callers are expected to check
+        // canAddBandwidthGroup() before asking for a new group.
+        return top_bandwidth_;
     }
 
     auto& [group_name, group] = groups.emplace_back(name, std::make_unique<tr_bandwidth>(&top_bandwidth_, true));

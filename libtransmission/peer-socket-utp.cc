@@ -302,11 +302,18 @@ std::shared_ptr<tr_peer_socket_utp> tr_peer_socket_utp::create(
 {
 #ifdef WITH_UTP
     auto* const sock = utp_create_socket(ctx);
+    if (sock == nullptr)
+    {
+        return {};
+    }
+
     auto const [ss, sslen] = socket_address.to_sockaddr();
     if (utp_connect(sock, reinterpret_cast<sockaddr const*>(&ss), sslen) == 0)
     {
         return std::make_shared<tr_peer_socket_utp_impl>(socket_address, sock, timer_maker);
     }
+
+    utp_close(sock);
 #endif
     return {};
 }

@@ -7,7 +7,10 @@
 #include <array>
 #include <cstddef>
 #include <iterator> // for std::distance()
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -762,7 +765,25 @@ bool constexpr quarks_are_sorted()
 static_assert(quarks_are_sorted(), "Predefined quarks must be sorted by their string value");
 static_assert(std::size(MyStatic) == TR_N_KEYS);
 
-auto& my_runtime{ *new std::vector<std::string_view>{} };
+struct RuntimeQuarks
+{
+    std::shared_mutex mutex;
+    std::vector<std::string_view> strings;
+    size_t bytes = 0;
+};
+
+// Intentionally leaked: quarks live for the life of the process.
+RuntimeQuarks& runtime_quarks()
+{
+    static auto* const runtime = new RuntimeQuarks{};
+    return *runtime;
+}
+
+// Runtime quarks are stored forever, so keep them bounded. Once either
+// limit is reached, tr_quark_try_new() fails and tr_quark_new() returns
+// TR_KEY_NONE instead of growing without bound.
+auto constexpr MaxRuntimeQuarkCount = size_t{ 1U << 18 };
+auto constexpr MaxRuntimeQuarkBytes = size_t{ 32U * 1024U * 1024U };
 
 } // namespace
 
@@ -778,8 +799,10 @@ std::optional<tr_quark> tr_quark_lookup(std::string_view key)
     }
 
     /* was it added during runtime? */
-    auto const rbegin = std::begin(my_runtime);
-    auto const rend = std::end(my_runtime);
+    auto& runtime = runtime_quarks();
+    auto const lock = std::shared_lock{ runtime.mutex };
+    auto const rbegin = std::begin(runtime.strings);
+    auto const rend = std::end(runtime.strings);
     if (auto const rit = std::find(rbegin, rend, key); rit != rend)
     {
         return TR_N_KEYS + std::distance(rbegin, rit);
@@ -788,25 +811,53 @@ std::optional<tr_quark> tr_quark_lookup(std::string_view key)
     return {};
 }
 
-tr_quark tr_quark_new(std::string_view str)
+std::optional<tr_quark> tr_quark_try_new(std::string_view str)
 {
     auto const utf8 = tr_strv_to_utf8_string(str);
     if (auto const prior = tr_quark_lookup(utf8); prior)
     {
-        return *prior;
+        return prior;
     }
 
-    auto const ret = TR_N_KEYS + std::size(my_runtime);
+    auto& runtime = runtime_quarks();
+    auto const lock = std::unique_lock{ runtime.mutex };
+
+    // Another thread may have added this quark while we were waiting for the lock.
+    if (auto const rit = std::find(std::begin(runtime.strings), std::end(runtime.strings), utf8);
+        rit != std::end(runtime.strings))
+    {
+        return TR_N_KEYS + std::distance(std::begin(runtime.strings), rit);
+    }
+
     auto const len = std::size(utf8);
+    if (std::size(runtime.strings) >= MaxRuntimeQuarkCount || runtime.bytes + len + 1 > MaxRuntimeQuarkBytes)
+    {
+        return std::nullopt;
+    }
+
     auto* perma = new char[len + 1];
     std::copy_n(std::begin(utf8), len, perma);
     perma[len] = '\0';
-    my_runtime.emplace_back(perma);
-    return ret;
+    runtime.strings.emplace_back(perma, len);
+    runtime.bytes += len + 1;
+    return TR_N_KEYS + std::size(runtime.strings) - 1;
+}
+
+tr_quark tr_quark_new(std::string_view str)
+{
+    return tr_quark_try_new(str).value_or(TR_KEY_NONE);
 }
 
 std::string_view tr_quark_get_string_view(tr_quark q)
 {
-    TR_ASSERT(q < TR_N_KEYS + std::size(my_runtime));
-    return q < TR_N_KEYS ? MyStatic[q] : my_runtime[q - TR_N_KEYS];
+    if (q < TR_N_KEYS)
+    {
+        return MyStatic[q];
+    }
+
+    auto& runtime = runtime_quarks();
+    auto const lock = std::shared_lock{ runtime.mutex };
+    auto const ix = q - TR_N_KEYS;
+    TR_ASSERT(ix < std::size(runtime.strings));
+    return ix < std::size(runtime.strings) ? runtime.strings[ix] : std::string_view{};
 }

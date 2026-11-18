@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <future>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -45,6 +46,22 @@ enum class UpnpState : uint8_t
 };
 } // namespace
 
+namespace
+{
+struct UpnpDevDeleter
+{
+    void operator()(UPNPDev* devlist) const noexcept
+    {
+        freeUPNPDevlist(devlist);
+    }
+};
+
+// Owns the list returned by upnpDiscover() so that it is freed even if
+// the discovery result is never consumed, e.g. when the session shuts
+// down while discovery is still in flight.
+using UpnpDevPtr = std::unique_ptr<UPNPDev, UpnpDevDeleter>;
+} // namespace
+
 struct tr_upnp
 {
     tr_upnp() = default;
@@ -57,6 +74,10 @@ struct tr_upnp
     {
         TR_ASSERT(!isMapped);
         TR_ASSERT(state == UpnpState::Idle || state == UpnpState::WillDiscover || state == UpnpState::Discovering);
+
+        // If discovery is still in flight, its shared state owns the
+        // result until the worker finishes and then frees the device list.
+        discover_future.reset();
 
         FreeUPNPUrls(&urls);
     }
@@ -72,7 +93,7 @@ struct tr_upnp
     // Used to return the results of upnpDiscover() from a worker thread
     // to be processed without blocking in tr_upnpPulse().
     // This will be pending while the state is UpnpState::DISCOVERING.
-    std::optional<std::future<UPNPDev*>> discover_future;
+    std::optional<std::future<UpnpDevPtr>> discover_future;
 };
 
 namespace
@@ -207,12 +228,12 @@ enum : uint8_t
     UPNP_IGD_INVALID = 3
 };
 
-auto* discover_thread_func(std::string bindaddr) // NOLINT performance-unnecessary-value-param
+auto discover_thread_func(std::string bindaddr) // NOLINT performance-unnecessary-value-param
 {
     // If multicastif is not NULL, it will be used instead of the default
     // multicast interface for sending SSDP discover packets.
     char const* multicastif = std::empty(bindaddr) ? nullptr : bindaddr.c_str();
-    return upnp_discover(2000, multicastif);
+    return UpnpDevPtr{ upnp_discover(2000, multicastif) };
 }
 
 template<typename T>
@@ -246,7 +267,7 @@ tr_port_forwarding_state tr_upnpPulse(
     {
         TR_ASSERT(!handle->discover_future);
 
-        auto task = std::packaged_task<UPNPDev*(std::string)>{ discover_thread_func };
+        auto task = std::packaged_task<UpnpDevPtr(std::string)>{ discover_thread_func };
         handle->discover_future = task.get_future();
         handle->state = UpnpState::Discovering;
 
@@ -256,16 +277,23 @@ tr_port_forwarding_state tr_upnpPulse(
     if (is_enabled && handle->state == UpnpState::Discovering && handle->discover_future &&
         is_future_ready(*handle->discover_future))
     {
-        auto* const devlist = handle->discover_future->get();
+        auto const devlist = handle->discover_future->get();
         handle->discover_future.reset();
 
         FreeUPNPUrls(&handle->urls);
         auto lanaddr = std::array<char, TrAddrStrlen>{};
         if (
 #if (MINIUPNPC_API_VERSION >= 18)
-            UPNP_GetValidIGD(devlist, &handle->urls, &handle->data, std::data(lanaddr), std::size(lanaddr) - 1, nullptr, 0)
+            UPNP_GetValidIGD(
+                devlist.get(),
+                &handle->urls,
+                &handle->data,
+                std::data(lanaddr),
+                std::size(lanaddr) - 1,
+                nullptr,
+                0)
 #else
-            UPNP_GetValidIGD(devlist, &handle->urls, &handle->data, std::data(lanaddr), std::size(lanaddr) - 1)
+            UPNP_GetValidIGD(devlist.get(), &handle->urls, &handle->data, std::data(lanaddr), std::size(lanaddr) - 1)
 #endif
             == UPNP_IGD_VALID_CONNECTED)
         {
@@ -282,8 +310,6 @@ tr_port_forwarding_state tr_upnpPulse(
             tr_logAddDebug(fmt::format("UPNP_GetValidIGD failed: {} ({})", tr_strerror(errno), errno));
             tr_logAddDebug("If your router supports UPnP, please make sure UPnP is enabled!");
         }
-
-        freeUPNPDevlist(devlist);
     }
 
     if (handle->state == UpnpState::Idle && handle->isMapped &&

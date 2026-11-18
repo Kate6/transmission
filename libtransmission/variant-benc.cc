@@ -191,8 +191,13 @@ struct MyHandler : public tr::benc::Handler
 
     bool Key(std::string_view sv, Context const& /*context*/) final
     {
-        key_ = tr_quark_new(sv);
+        auto const key = tr_quark_try_new(sv);
+        if (!key)
+        {
+            return false;
+        }
 
+        key_ = *key;
         return true;
     }
 

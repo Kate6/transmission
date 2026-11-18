@@ -94,7 +94,9 @@ public:
 
                     static constexpr auto TimeoutSecs = std::chrono::seconds{ 15 };
                     auto const favicon_url = fmt::format("{:s}://{:s}:{:d}/favicon.{:s}", scheme, url->host, ports[i], suffix);
-                    in_flight->web().fetch({ favicon_url, std::move(on_fetch_response), nullptr, TimeoutSecs });
+                    // If the fetch is rejected, InFlightData's destructor
+                    // still invokes the callback once with a null icon.
+                    (void)in_flight->web().fetch({ favicon_url, std::move(on_fetch_response), nullptr, TimeoutSecs });
                 }
             }
         }

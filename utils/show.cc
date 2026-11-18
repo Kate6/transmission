@@ -346,14 +346,19 @@ void doScrape(tr_torrent_metainfo const& metainfo)
         auto response_mutex = std::mutex{};
         auto response_cv = std::condition_variable{};
         auto lock = std::unique_lock(response_mutex);
-        web->fetch({ scrape_url,
-                     [&response, &response_cv](tr_web::FetchResponse const& resp)
-                     {
-                         response = resp;
-                         response_cv.notify_one();
-                     },
-                     nullptr,
-                     TimeoutSecs });
+        if (!web->fetch(
+                { scrape_url,
+                  [&response, &response_cv](tr_web::FetchResponse const& resp)
+                  {
+                      response = resp;
+                      response_cv.notify_one();
+                  },
+                  nullptr,
+                  TimeoutSecs }))
+        {
+            fmt::print("error: couldn't send scrape request\n");
+            continue;
+        }
         response_cv.wait(lock);
 
         // check the response code

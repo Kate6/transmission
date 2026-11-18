@@ -241,17 +241,18 @@ public:
         queued_tasks_cv_.notify_one();
     }
 
-    void fetch(FetchOptions&& options)
+    bool fetch(FetchOptions&& options)
     {
         auto const lock = std::unique_lock{ tasks_mutex_ };
 
         if (deadline_exists()) // no new tasks once shutdown has begun
         {
-            return;
+            return false;
         }
 
         queued_tasks_.emplace_back(*this, std::move(options));
         queued_tasks_cv_.notify_one();
+        return true;
     }
 
     [[nodiscard]] bool is_idle() const noexcept
@@ -403,10 +404,11 @@ public:
 
             impl.paused_easy_handles.erase(easy_);
 
-            if (auto const url = tr_urlParse(options_.url); url)
+            if (auto const url = tr_urlParse(options_.url); url && impl.cached_easy_count_ < MaxCachedEasyHandles)
             {
                 curl_easy_reset(easy);
                 impl.easy_pool_[std::string{ url->host }].emplace(easy);
+                ++impl.cached_easy_count_;
             }
             else
             {
@@ -445,6 +447,10 @@ public:
     static auto constexpr MaxHostConnections = long{ 16 };
     static auto constexpr MaxTotalConnections = long{ 96 };
     static auto constexpr MaxCachedConnections = MaxTotalConnections;
+
+    // Don't let the idle easy-handle pool grow without bound: each cached
+    // handle holds a connection's worth of state.
+    static auto constexpr MaxCachedEasyHandles = static_cast<size_t>(MaxTotalConnections);
 
     bool const curl_verbose = tr_env_key_exists("TR_CURL_VERBOSE");
     bool const curl_ssl_verify = !tr_env_key_exists("TR_CURL_SSL_NO_VERIFY");
@@ -496,6 +502,12 @@ public:
         {
             easy = iter->second.top().release();
             iter->second.pop();
+            --cached_easy_count_;
+
+            if (std::empty(iter->second))
+            {
+                easy_pool_.erase(iter);
+            }
         }
 
         if (easy == nullptr)
@@ -853,6 +865,7 @@ public:
     curl_helpers::shared_unique_ptr const curlsh_{ curl_share_init() };
 
     std::map<std::string /*host*/, std::stack<curl_helpers::easy_unique_ptr>, std::less<>> easy_pool_;
+    size_t cached_easy_count_ = 0;
 
     std::mutex tasks_mutex_;
     std::condition_variable queued_tasks_cv_;
@@ -900,9 +913,9 @@ std::unique_ptr<tr_web> tr_web::create(Mediator& mediator)
     return std::unique_ptr<tr_web>(new tr_web(mediator));
 }
 
-void tr_web::fetch(FetchOptions&& options)
+bool tr_web::fetch(FetchOptions&& options)
 {
-    impl_->fetch(std::move(options));
+    return impl_->fetch(std::move(options));
 }
 
 void tr_web::startShutdown(std::chrono::milliseconds deadline)

@@ -518,6 +518,18 @@ struct tau_tracker
         return std::empty(announces) && std::empty(scrapes);
     }
 
+    // Trackers are cached indefinitely so that the UDP connection ID can
+    // be reused, but that cache should not grow without bound when torrents
+    // with many different trackers come and go.
+    [[nodiscard]] bool can_prune(time_t now) const noexcept
+    {
+        return is_idle() && now >= last_used_at + TrackerIdleTtlSecs &&
+            std::ranges::all_of(connecting_at, [](auto const t) { return t == 0; }) &&
+            std::ranges::none_of(addr_pending_dns_, [](auto const& dns) { return !!dns; });
+    }
+
+    time_t last_used_at = tr_time();
+
 private:
     using Sockaddr = std::pair<sockaddr_storage, socklen_t>;
     using MaybeSockaddr = std::optional<Sockaddr>;
@@ -673,6 +685,7 @@ private:
 
     static constexpr auto DnsRetryIntervalSecs = time_t{ 3600 };
     static constexpr auto ConnectionRequestTtl = time_t{ 30 };
+    static constexpr auto TrackerIdleTtlSecs = time_t{ 3600 };
 };
 
 // --- SESSION
@@ -719,6 +732,9 @@ public:
         {
             tracker.upkeep();
         }
+
+        auto const now = tr_time();
+        std::erase_if(trackers_, [now](auto const& tracker) { return tracker.can_prune(now); });
     }
 
     // @brief process an incoming udp message if it's a tracker response.
@@ -815,6 +831,7 @@ private:
         {
             if (tracker.authority == authority)
             {
+                tracker.last_used_at = tr_time();
                 return &tracker;
             }
         }
@@ -826,6 +843,7 @@ private:
             parsed->host,
             parsed->host_wo_brackets,
             tr_port::from_host(parsed->port));
+        tracker.last_used_at = tr_time();
         logtrace(tracker.log_name(), "New tau_tracker created");
         return &tracker;
     }

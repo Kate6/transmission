@@ -54,7 +54,7 @@ public:
     {
     }
 
-    void request_next_chunk();
+    bool request_next_chunk();
 
     bool dead = false;
     tr_block_span_t const blocks;
@@ -282,10 +282,14 @@ public:
         {
             auto* const task = new tr_webseed_task{ tor, this, *span };
             tasks.insert(task);
-            task->request_next_chunk();
 
             active_requests.set_span(span->begin, span->end);
             publish(tr_peer_event::SentRequest(tor.block_info(), *span));
+
+            if (!task->request_next_chunk())
+            {
+                delete task;
+            }
         }
     }
 
@@ -455,7 +459,10 @@ void tr_webseed_task::on_partial_data_fetched(tr_web::FetchResponse const& web_r
         // Request finished successfully but there's still data missing.
         // That means we've reached the end of a file and need to request
         // the next one
-        task->request_next_chunk();
+        if (!task->request_next_chunk())
+        {
+            delete task;
+        }
         return;
     }
 
@@ -480,7 +487,7 @@ void makeUrl(tr_webseed_impl const* const webseed, std::string_view name, Output
     }
 }
 
-void tr_webseed_task::request_next_chunk()
+bool tr_webseed_task::request_next_chunk()
 {
     auto const& tor = webseed_->tor;
 
@@ -503,7 +510,18 @@ void tr_webseed_task::request_next_chunk()
     {
         on_data_received(n_bytes);
     };
-    tor.session->fetch(std::move(options));
+
+    if (!tor.session->fetch(std::move(options)))
+    {
+        // The fetch was rejected, e.g. because the session is shutting down.
+        // The callback will never be called, so unwind this request now.
+        webseed_->connection_limiter.task_finished(false);
+        webseed_->on_rejection({ .begin = loc_.block, .end = blocks.end });
+        webseed_->tasks.erase(this);
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace

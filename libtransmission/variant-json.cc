@@ -110,17 +110,15 @@ struct json_to_variant_handler : public rapidjson::BaseReaderHandler<>
         return false;
     }
 
-    bool Key(Ch const* const str, rapidjson::SizeType const len, bool const copy)
+    bool Key(Ch const* const str, rapidjson::SizeType const len, bool const /*copy*/)
     {
-        if (copy)
+        auto const key = tr_quark_try_new(std::string_view{ str, len });
+        if (!key)
         {
-            key_buf_.assign(str, len);
-            cur_key_ = key_buf_;
+            return false;
         }
-        else
-        {
-            cur_key_ = std::string_view{ str, len };
-        }
+
+        cur_key_ = *key;
         return true;
     }
 
@@ -192,10 +190,7 @@ private:
         }
         if (auto* const map = parent->get_if<tr_variant::Map>())
         {
-            TR_ASSERT(!std::empty(cur_key_));
-            auto tmp = std::string_view{};
-            std::swap(cur_key_, tmp);
-            return &(*map)[tr_quark_new(tmp)];
+            return &(*map)[cur_key_];
         }
 
         return parent;
@@ -210,8 +205,7 @@ private:
      * a preallocation heuristic for the next container at that depth. */
     std::array<size_t, MaxDepth> prealloc_guess_{};
 
-    std::string key_buf_;
-    std::string_view cur_key_;
+    tr_quark cur_key_ = TR_KEY_NONE;
     std::stack<tr_variant*> stack_;
 };
 } // namespace parse_helpers

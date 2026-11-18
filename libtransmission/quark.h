@@ -776,5 +776,18 @@ enum // NOLINT(performance-enum-size)
  * Create a new quark for the specified string. If a quark already
  * exists for that string, it is returned so that no duplicates are
  * created.
+ *
+ * @return the quark, or nullopt if the runtime quark table is full
+ */
+[[nodiscard]] std::optional<tr_quark> tr_quark_try_new(std::string_view str);
+
+/**
+ * Create a new quark for the specified string. If a quark already
+ * exists for that string, it is returned so that no duplicates are
+ * created.
+ *
+ * This is a convenience wrapper around tr_quark_try_new() for callers
+ * that cannot handle failure. If the runtime quark table is full, it
+ * returns TR_KEY_NONE.
  */
 [[nodiscard]] tr_quark tr_quark_new(std::string_view str);
